@@ -12,6 +12,9 @@
     "db:verify-migrations": "pnpm --filter @quickex/backend run db:verify-migrations",
     "test:perf:horizon": "pnpm --filter @quickex/backend run test:perf:horizon",
     "check:generated-types": "node scripts/check-generated-types.js",
+    "check:local-seed": "node scripts/local-dev/check-seed.mjs",
+    "test:local-seed": "node --test scripts/local-dev/__tests__/seed.test.mjs",
+    "local:bootstrap": "bash scripts/local-dev/bootstrap.sh",
     "secret-scan": "bash scripts/secret-scan.sh",
     "secret-scan:verify": "bash scripts/secret-scan.sh --verify",
     "secret-scan:full": "bash scripts/secret-scan.sh --full"

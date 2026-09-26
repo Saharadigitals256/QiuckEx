@@ -61,6 +61,30 @@ jobs:
             --filter="${{ matrix.package }}..." \
             --cache-dir=".turbo/cache"
 
+  # ── Local dev fixtures (issue #296) ───────────────────────────────────────
+  # Validates that scripts/local-dev/seed.sql matches the migrations and holds
+  # no signing material. Static only, so it needs neither Docker nor Postgres.
+  local-dev-seed:
+    name: Local Dev Seed Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Check the seed fixtures
+        run: node scripts/local-dev/check-seed.mjs
+
+      - name: Test the seed check
+        run: node --test scripts/local-dev/__tests__/seed.test.mjs
+
+      - name: Check the bootstrap script parses
+        run: bash -n scripts/local-dev/bootstrap.sh
+
   # ── Governance gate (issues #306-#309) ────────────────────────────────────
   # Dependency-free: validates ADRs, asset listing policy, retention schedule and
   # the a11y/i18n standard before anything is installed.

@@ -105,5 +105,23 @@ Verify that:
 - Rust tests pass (`cargo test`).
 - TypeScript tests pass (`npm test`).
 - Linting and secret scanning pass (`./scripts/secret-scan.sh --verify`).
+- The governance gate passes (`node scripts/governance/check.mjs`) if you touched a policy or ADR.
+- The local fixtures still match the schema (`node scripts/local-dev/check-seed.mjs`) if you changed `scripts/local-dev/seed.sql` or any migration.
 - Relevant capability maps and contract maps are updated in the same PR.
 - Record assumptions about network, custody, and backward compatibility in the PR description.
+
+## Running the backend locally
+
+`scripts/local-dev/bootstrap.sh` brings up a local Supabase and Redis and seeds
+deterministic fixtures, so you can work against real services instead of mocks:
+
+```bash
+./scripts/local-dev/bootstrap.sh
+```
+
+It reports every missing prerequisite in one pass, waits for Postgres, applies the
+migrations, seeds idempotent fixtures, and prints the values to export. Redis is
+optional — the backend falls back to in-memory caching when `REDIS_URL` is unset.
+The fixtures are synthetic and contain **public keys only**; no signing material is
+ever stored, consistent with self-custody (ADR 0001). Full details and
+troubleshooting: [../scripts/local-dev/README.md](../scripts/local-dev/README.md).
