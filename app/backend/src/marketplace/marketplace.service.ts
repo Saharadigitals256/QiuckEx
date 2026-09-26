@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { Keypair } from '@stellar/stellar-sdk';
 import { SupabaseService, MarketplaceListing, MarketplaceBid } from '../supabase/supabase.service';
 import { SupabaseUniqueConstraintError } from '../supabase/supabase.errors';
 import { UsernamesService } from '../usernames/usernames.service';
@@ -103,7 +104,6 @@ export class MarketplaceService {
     viewerPublicKey?: string | null,
   ): Promise<MarketplaceListingDetailDto> {
     const listing = await this.getListing(listingId);
-
     const bidPage = await this.supabase.getBidsByListingIdPaginated(
       listingId,
       50,
@@ -159,6 +159,8 @@ export class MarketplaceService {
     listingId: string,
     bidderPublicKey: string,
     bidAmount: number,
+    signature: string,
+    signedAt: number,
   ): Promise<MarketplaceBid> {
     const listing = await this.getListing(listingId);
 

@@ -163,6 +163,8 @@ export class MarketplaceController {
         listingId,
         body.bidderPublicKey,
         body.bidAmount,
+        body.signature,
+        body.signedAt,
       );
       return { bid };
     } catch (err) {

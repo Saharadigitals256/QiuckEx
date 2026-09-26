@@ -20,6 +20,7 @@ import { NotificationsModule } from "../notifications/notifications.module";
 import { LinksModule } from "../links/links.module";
 import { ReconciliationModule } from "../reconciliation/reconciliation.module";
 import { IngestionModule } from "../ingestion/ingestion.module";
+import { ReceiptsModule } from "../receipts/receipts.module";
 import { AuthModule } from "../auth/auth.module";
 import { MetricsModule } from "../metrics/metrics.module";
 import { ApiKeysModule } from "../api-keys/api-keys.module";
@@ -30,6 +31,7 @@ import {
   ReconciliationHandler,
   StellarReconnectHandler,
   TemplateExecutionHandler,
+  DerivedRecordRepairHandler,
 } from "./handlers";
 
 /**
@@ -60,6 +62,7 @@ import {
     forwardRef(() => LinksModule),
     forwardRef(() => ReconciliationModule),
     forwardRef(() => IngestionModule),
+    ReceiptsModule,
   ],
   controllers: [JobAdminController],
   providers: [
@@ -77,6 +80,7 @@ import {
     ReconciliationHandler,
     StellarReconnectHandler,
     TemplateExecutionHandler,
+    DerivedRecordRepairHandler,
   ],
   exports: [
     JobQueueService,
@@ -90,6 +94,7 @@ import {
     ReconciliationHandler,
     StellarReconnectHandler,
     TemplateExecutionHandler,
+    DerivedRecordRepairHandler,
   ],
 })
 export class JobQueueModule {}

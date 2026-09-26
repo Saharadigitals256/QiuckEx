@@ -63,6 +63,7 @@ import { TransactionTimelineModule } from "./transaction-timeline/transaction-ti
 import { DashboardFeedModule } from "./dashboard-feed/dashboard-feed.module";
 import { ContactsModule } from "./contacts/contacts.module";
 import { TeamsModule } from "./teams/teams.module";
+import { ReceiptsModule } from "./receipts/receipts.module";
 import { BulkOperationsModule } from "./bulk-operations/bulk-operations.module";
 import { SessionModule } from "./session/session.module";
 
@@ -103,6 +104,7 @@ PaymentsModule,
 IngestionModule,
 ApiKeysModule,
 MarketplaceModule,
+ReceiptsModule,
 ContactsModule,
 TeamsModule,
 FiatRampsModule,
