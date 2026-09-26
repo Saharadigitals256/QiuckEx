@@ -3,6 +3,8 @@ import { Keypair } from '@stellar/stellar-sdk';
 import { SupabaseService, MarketplaceListing, MarketplaceBid } from '../supabase/supabase.service';
 import { SupabaseUniqueConstraintError } from '../supabase/supabase.errors';
 import { UsernamesService } from '../usernames/usernames.service';
+import { AppConfigService } from '../config';
+import { SupabaseError } from '../supabase/supabase.errors';
 import { MarketplaceError, MarketplaceErrorCode } from './errors';
 import {
   buildMarketplaceStateHints,
@@ -14,9 +16,13 @@ import { MarketplaceListingDetailDto } from './dto/marketplace-listing-detail.dt
 
 @Injectable()
 export class MarketplaceService {
+  private readonly maxActiveListingsPerSeller = 5;
+  private readonly maxPendingBidsPerBidder = 5;
+
   constructor(
     private readonly supabase: SupabaseService,
     private readonly usernames: UsernamesService,
+    private readonly config: AppConfigService,
   ) {}
 
   async listUsername(
@@ -25,6 +31,13 @@ export class MarketplaceService {
     askingPrice: number,
   ): Promise<MarketplaceListing> {
     const normalized = username.trim().toLowerCase();
+
+    if (this.config.marketplaceRestrictedUsernames.includes(normalized)) {
+      throw new MarketplaceError(
+        MarketplaceErrorCode.COMPLIANCE_RESTRICTED,
+        'This username is restricted from marketplace listings',
+      );
+    }
 
     const owned = await this.usernames.listByPublicKey(sellerPublicKey);
     if (!owned.find((u) => u.username === normalized)) {
@@ -42,9 +55,22 @@ export class MarketplaceService {
       );
     }
 
+    if (await this.supabase.countActiveListingsBySeller(sellerPublicKey) >= this.maxActiveListingsPerSeller) {
+      throw new MarketplaceError(
+        MarketplaceErrorCode.LISTING_LIMIT_REACHED,
+        `A wallet may have at most ${this.maxActiveListingsPerSeller} active listings`,
+      );
+    }
+
     try {
       return await this.supabase.createListing(normalized, sellerPublicKey, askingPrice);
     } catch (err) {
+      if (err instanceof SupabaseError && err.message.includes('MARKETPLACE_ACTIVE_LISTING_LIMIT')) {
+        throw new MarketplaceError(
+          MarketplaceErrorCode.LISTING_LIMIT_REACHED,
+          `A wallet may have at most ${this.maxActiveListingsPerSeller} active listings`,
+        );
+      }
       if (err instanceof SupabaseUniqueConstraintError) {
         throw new MarketplaceError(
           MarketplaceErrorCode.ALREADY_LISTED,
@@ -108,6 +134,10 @@ export class MarketplaceService {
   async cancelListing(listingId: string, sellerPublicKey: string): Promise<void> {
     const listing = await this.getListing(listingId);
 
+    if (listing.status === 'cancelled') {
+      return;
+    }
+
     if (listing.seller_public_key !== sellerPublicKey) {
       throw new MarketplaceError(
         MarketplaceErrorCode.UNAUTHORIZED,
@@ -148,34 +178,22 @@ export class MarketplaceService {
       );
     }
 
-    if (Math.abs(Date.now() - signedAt) > 5 * 60 * 1000) {
+    if (!Number.isFinite(bidAmount) || bidAmount <= 0) {
       throw new MarketplaceError(
-        MarketplaceErrorCode.INVALID_SIGNATURE,
-        'Bid authorization has expired',
+        MarketplaceErrorCode.INVALID_PRICE,
+        'Bid amount must be a positive number',
       );
     }
 
-    const message = `quickex:marketplace:bid:${listingId}:${bidderPublicKey}:${bidAmount}:${signedAt}`;
-    try {
-      const valid = Keypair.fromPublicKey(bidderPublicKey).verify(
-        Buffer.from(message, 'utf8'),
-        Buffer.from(signature, 'base64'),
-      );
-      if (!valid) throw new Error('signature mismatch');
-    } catch {
+    const minimumBid = Number(listing.asking_price) + 1;
+    if (bidAmount < minimumBid) {
       throw new MarketplaceError(
-        MarketplaceErrorCode.INVALID_SIGNATURE,
-        'Invalid bid authorization signature',
+        MarketplaceErrorCode.INVALID_PRICE,
+        `Bid amount must be at least ${minimumBid}`,
       );
     }
 
-    return this.supabase.placeBid(
-      listingId,
-      bidderPublicKey,
-      bidAmount,
-      signature,
-      signedAt,
-    );
+    return this.supabase.placeBid(listingId, bidderPublicKey, bidAmount);
   }
 
   async getBids(listingId: string, limit: number = 20, cursor: string | null = null): Promise<{ bids: MarketplaceBid[]; next_cursor: string | null; has_more: boolean }> {

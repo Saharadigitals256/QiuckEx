@@ -2,7 +2,7 @@
 
 This document maps the backend HTTP endpoints actually consumed by the **frontend** (`app/frontend`) and **mobile** (`app/mobile`) apps to their owning backend modules (`app/backend/src/*`), so route mismatches and payload drift are caught before contributor work diverges.
 
-Scope: REST contracts between clients and the NestJS backend. On-chain/Soroban event schemas are covered separately in `app/backend/doc/EVENTS.md` and `app/contract/docs/events-schema.md`.
+Scope: REST contracts between clients and the NestJS backend. For the complete reference of all route definitions, request/response models, and error envelopes, see [PUBLIC-API-REFERENCE.md](./PUBLIC-API-REFERENCE.md). On-chain/Soroban event schemas are covered separately in `app/backend/doc/EVENTS.md` and `app/contract/docs/events-schema.md`.
 
 > **Important:** the backend registers **no global route prefix** (`app/backend/src/main.ts` never calls `setGlobalPrefix`). Controller prefixes are the full public paths. Anything a client prepends (like `/api`) is a bug — see [Known mismatches](#known-mismatches--payload-drift).
 
@@ -17,10 +17,67 @@ Scope: REST contracts between clients and the NestJS backend. On-chain/Soroban e
 
 Auth conventions:
 
-- **Public** (rate-throttled, no key): `health`/`ready`/`status`, `username/*`, `payment-links/status`, `v1/receipts/*`
+- **Public** (rate-throttled, no key): `docs` (`/docs`, `/docs/json`, `/docs/openapi.json`), `health`/`ready`/`status`, `username/*`, `payment-links/status`, `v1/receipts/*`
 - **Optional `X-API-Key`** (higher rate limits via `ApiKeyGuard`): `links/metadata`, `transactions`, `stellar/*`, `analytics/*`, `contracts/registry` reads
 - **Admin-scoped API key** (`@RequireScopes('admin')`): all `admin/*` controllers, contract registry writes (`publish`, `PUT deployments/:name`, `rollback`)
 - Errors follow the global envelope `{ code, message, fields? }` (global `ValidationPipe` in `main.ts`, e.g. `VALIDATION_ERROR`)
+
+## Transaction submission, confirmation & retry orchestration
+
+The transaction lifecycle is owned by the `transactions` module (`app/backend/src/transactions/*`) and consumed by the mobile history screen (`app/mobile/services/transactions.ts`). Submission, confirmation polling, and retry are orchestrated server-side so clients never hold signing keys — self-custody is preserved because the backend only ever receives an already-signed XDR envelope and never a secret key.
+
+### Endpoints
+
+| Endpoint | Owning module | Request → response summary |
+|---|---|---|
+| `POST /transactions/submit` | `transactions` (`transactions.controller.ts`) | `{ signedXdr, network, idempotencyKey }` → `{ hash, status, ledger?, submittedAt }`. Optional `X-API-Key`. |
+| `GET /transactions/:hash/status` | `transactions` | → `{ hash, status, ledger?, confirmations, lastCheckedAt }`; polls Horizon for confirmation. |
+| `POST /transactions/:hash/retry` | `transactions` | Re-submits a previously failed envelope using the stored idempotency key → same response shape as `submit`. |
+
+### Status model
+
+`status` is one of `pending`, `submitted`, `confirmed`, `failed`, `expired`. Terminal states are `confirmed`, `failed`, and `expired`; only `pending`/`submitted` are retryable.
+
+### Authorization & idempotency
+
+- Submission requires a valid signed envelope whose source account matches the authenticated `X-API-Key` owner (or the public key asserted in the request when no key is configured). Unauthorized submissions return `403 FORBIDDEN`.
+- `idempotencyKey` is required and scoped per source account. Replaying the same key returns the original result (`200`) instead of re-submitting; a conflicting payload under the same key returns `409 IDEMPOTENCY_CONFLICT`.
+- Duplicate submissions of an already-`confirmed` hash return the cached confirmation rather than a second Horizon call.
+
+### Validation & stable errors
+
+| Condition | HTTP | `code` |
+|---|---|---|
+| Missing/malformed `signedXdr` | 400 | `VALIDATION_ERROR` |
+| Unsupported `network` | 400 | `UNSUPPORTED_NETWORK` |
+| Envelope expired (`timeBounds.maxTime` in the past) | 400 | `TRANSACTION_EXPIRED` |
+| Source account not authorized for the key | 403 | `FORBIDDEN` |
+| Replayed key with different payload | 409 | `IDEMPOTENCY_CONFLICT` |
+| Horizon unreachable / 5xx | 503 | `HORIZON_UNAVAILABLE` |
+| Horizon rejects the envelope | 422 | `TRANSACTION_REJECTED` |
+
+### Retry & rollback
+
+- Retries use exponential backoff (base 1s, cap 30s, max 5 attempts) and are only issued for `pending`/`submitted` transactions or transient `HORIZON_UNAVAILABLE` failures.
+- A retry never mutates the original envelope; it re-submits the stored signed XDR. If Horizon reports the transaction as already applied, the orchestrator reconciles to `confirmed` instead of double-spending.
+- Failed submissions leave no partial state: the idempotency record is retained so a later retry is safe, and no balance/ledger mutation is performed by the backend.
+
+### Feature gating
+
+Mainnet submission is gated behind `TESTNET_CONTRACT_WRITES_FLAG` (same flag used by `stellar/soroban-preflight`). When unset, `POST /transactions/submit` returns `503 CONTRACT_NOT_CONFIGURED` on mainnet and only testnet is permitted. `NetworkSafetyGuard` enforces the network/asset allow-list before any Horizon call.
+
+### Observability
+
+- Structured logs emit `{ event, hash, network, status, attempt, latencyMs }` — never the signed XDR, secret keys, or full account balances.
+- Metrics: `tx_submit_total{status}`, `tx_confirm_latency_ms` (histogram), `tx_retry_total{reason}`, `tx_idempotency_conflict_total`.
+- Degraded mode: when Horizon is unavailable, submissions return `503 HORIZON_UNAVAILABLE` and clients fall back to the cached history view; the orchestrator queues a bounded retry rather than failing the user session.
+
+### Configuration & operations
+
+- `QUICKEX_CONTRACT_ID` — required for mainnet submission (see `docs/horizon-usage.md`).
+- `TESTNET_CONTRACT_WRITES_FLAG` — enables mainnet writes; leave unset until mainnet rollout.
+- No database migration is required; idempotency records are keyed by `(sourceAccount, idempotencyKey)` and expire after the transaction's `timeBounds` window.
+- Operational procedure: on sustained `HORIZON_UNAVAILABLE`, check Horizon status, then replay queued retries via `POST /transactions/:hash/retry`; confirm reconciliation in the `tx_confirm_latency_ms` dashboard.
 
 ## Frontend endpoint map
 
@@ -29,6 +86,7 @@ Auth conventions:
 | Public profile page (`app/[username]/page.tsx`) | `GET /username/:username` | `usernames` (`usernames.controller.ts`) | Path param → `{ id, username, publicKey, isPublic, lastActiveAt, createdAt }`; private profiles return only `{ username, isPublic: false }`; 404 if unknown |
 | Pay page (`pay/PaymentPageClient.tsx`) + SSR OG previews (`lib/og-metadata.ts`) | `GET /payment-links/status?username&amount&asset&memo&acceptedAssets` | `links` (`payment-link.controller.ts`) | Query params → `PaymentLinkStatusDto` (active / expired / paid / refunded) |
 | Link generator (`generator/page.tsx`) | `GET /stellar/verified-assets` | `stellar` (`stellar.controller.ts`) | → `AssetListResponseDto` (verified assets + TOML branding metadata) |
+| Link generator — wallet capability discovery | `GET /stellar/wallet-capabilities?publicKey` | `stellar` | → `WalletCapabilitiesDto`; drives unsupported-wallet UI gating (see above) |
 | Link generator — cross-asset preview | `POST /stellar/path-preview` | `stellar` | `{ destAsset, destAmount, sourceAccount... }` → candidate paths + estimated source amounts (strict-receive) |
 | Link generator — contract preflight | `POST /stellar/soroban-preflight` | `stellar` | `{ sourceAccount }` → compose-pipeline `health_check` simulation. Gated: `NetworkSafetyGuard` + `TESTNET_CONTRACT_WRITES_FLAG`; 503 `CONTRACT_NOT_CONFIGURED` if `QUICKEX_CONTRACT_ID` unset |
 | Link generator — create link | `POST /links/metadata` | `links` (`links.controller.ts`) | `LinkMetadataRequestDto` → `{ success, data: LinkMetadataResponseDto }`; optional `X-API-Key` raises rate limit 20→120 req/min |
@@ -47,11 +105,15 @@ Auth conventions:
 | Screen / feature | Endpoint | Owning backend module | Request → response summary |
 |---|---|---|---|
 | Transaction history (`services/transactions.ts`) | `GET /transactions?accountId&limit&cursor&asset` | `transactions` (`transactions.controller.ts`) | → `TransactionResponseDto` (normalized payments via Horizon, cached ~60s); expect 429/502/503 semantics |
+| Transaction submission (`services/transactions.ts`) | `POST /transactions/submit` | `transactions` | Signed XDR → `{ hash, status }`; see [Transaction submission, confirmation & retry orchestration](#transaction-submission-confirmation--retry-orchestration) |
+| Transaction confirmation (`services/transactions.ts`) | `GET /transactions/:hash/status` | `transactions` | Polls confirmation state; terminal states stop polling |
+| Transaction retry (`services/transactions.ts`) | `POST /transactions/:hash/retry` | `transactions` | Re-submits a failed envelope; idempotent |
 | Link creation (`services/link-metadata.ts`, `app/link-generator.tsx`) | `POST /links/metadata` | `links` | Same contract as frontend — paths **match** ✅ |
+| Wallet capability discovery (`services/wallet-capabilities.ts`) | `GET /stellar/wallet-capabilities?publicKey` | `stellar` | Same contract as frontend ✅; drives unsupported-wallet gating on escrow confirmation |
 | Asset picker (`app/link-generator.tsx`) | `GET /stellar/verified-assets` | `stellar` | Same as frontend ✅ |
 | Notification center (`services/in-app-notifications.ts`) | `GET /notifications/in-app?publicKey`, `POST /notifications/in-app/:id/read`, `POST /notifications/in-app/read-all?publicKey` | `notifications` (`notifications.controller.ts`) | List + read-state; client tolerates both a plain array and a Supabase-style list envelope (defensive drift handling) |
 | Escrow confirmation (`app/payment-confirmation.tsx` → `hooks/useContractRegistry.ts` → `services/contract-registry.ts`) | ⚠️ `GET /api/contracts/registry` | `contracts` (`contract-registry.controller.ts`) | **BROKEN** — backend serves `GET /contracts/registry` (with ETag/304 support). The `/api` prefix 404s. See mismatch #1 |
-| Session bootstrap (`services/session-bootstrap.ts`) | ⚠️ `GET /session/bootstrap` (Bearer = publicKey) | — | **No backend route exists.** Planned/not wired |
+| Session bootstrap (`services/session-bootstrap.ts`) | `GET /session/bootstrap` (Bearer = publicKey) | `session` (`session.controller.ts`) | Runtime configuration, active feature flags, unread count, and authenticated account context; degrades safely when offline |
 | In-app feedback (`services/feedback.ts`) | ⚠️ `POST /feedback` | — | **No backend controller.** Client intentionally degrades to an exportable payload on failure |
 | Share receipt (`src/screens/ReceiptScreen.tsx`, `hooks/useShareReceipt.ts`) | `${baseUrl}/tx/:receiptHash` | — | A **web** share URL, not an API call. Note the actual receipts API is `GET /v1/receipts/tx/:txHash` — don't confuse the two |
 
@@ -60,7 +122,7 @@ Auth conventions:
 Explicitly tracked so contributors don't re-discover them:
 
 1. **Mobile contract registry path is wrong** — `app/mobile/services/contract-registry.ts` calls `/api/contracts/registry`; the backend route is `/contracts/registry` (no global `api` prefix exists). This breaks Escrow registry sync on the payment-confirmation screen. Fix: drop the `/api` prefix (and consider adopting `If-None-Match`/ETag, which the backend already supports).
-2. **Mobile `GET /session/bootstrap`** — client is wired (`services/session-bootstrap.ts`), backend route does not exist. Either implement the backend controller or feature-gate the client call.
+2. **Mobile `GET /session/bootstrap`** — resolved: backend controller implemented (`src/session/session.controller.ts`), delivering runtime configuration, feature flags, unread counts, and account context with degraded fallback in client.
 3. **Mobile `POST /feedback`** — no backend controller; the client's export fallback masks this, but every submit silently "fails" to the export path when a backend is configured.
 4. **Base-URL drift** — resolved: mobile services default to `http://localhost:4000`, and `payment-confirmation.tsx` uses the canonical `api.quickex.to` fallback. `EXPO_PUBLIC_API_URL` can still override the local default when needed.
 5. **Prefix inconsistency** — `v1/receipts` is the only versioned controller; `api/environment-parity` is the only `api/`-prefixed one; everything else is unprefixed. Treat these as historical accidents, not conventions to copy.
@@ -83,13 +145,22 @@ Useful when picking issues — these are "wire the client" opportunities, not ne
 |---|---|---|
 | `GET /username/search`, `/trending`, `/recently-active`, `/featured`, `POST /username/toggle-public` | `usernames` | `app/backend/docs/API-REFERENCE-PUBLIC-PROFILES.md` |
 | `links/recurring/*` | `links` (`recurring-payments.controller.ts`) | `app/backend/docs/RECURRING-PAYMENTS.md` |
-| `GET /v1/receipts/tx/:txHash`, `GET /v1/receipts/address/:address` | `receipts` | — (mobile ReceiptScreen builds a web URL instead) |
+| `GET /v1/receipts/address/:address` | `receipts` | (Address-level listing; single tx verified via `services/receipts.ts`) |
 | `GET /payments/recent` | `payments` | — |
 | `POST /stellar/quote`, `GET /stellar/quote/:quoteId`, `POST /stellar/path-preview/strict-send` | `stellar` | — |
 | `GET /analytics/time-series`, `GET /analytics/assets` | `analytics` | `app/backend/docs/ANALYTICS-API.md` (frontend uses only `report`/`export`) |
 | `notifications/preferences/*` | `notifications` | — |
 | `admin/refunds`, `admin/rc-validation`, `admin/operations`, `admin/notification-templates`, `admin/support/bundle` | respective modules | operator-facing, admin key required |
 | `transaction-timeline`, `privacy`, `reconciliation`, `telegram`, `metrics`, `developer/testnet`, `api/environment-parity` | respective modules | server-side only today |
+| `GET /asset-listing/policy` | `asset-listing` (asset-listing.controller.ts) | Public (optional key) | → published listing policy: tiers, states, transitions, delisting triggers, evidence max ages, `ASSET_LISTING_*` error codes, feature flags. No personal data |
+| `GET /admin/asset-listing/registry`, `GET /admin/asset-listing/decisions` | `asset-listing` (asset-listing-admin.controller.ts) | `@RequireScopes('admin')` | Registry rows with effective status/served flag/reasons; append-only decision trail |
+| `POST /admin/asset-listing/decisions` | `asset-listing` | `@RequireScopes('admin')` + `assets.listing_decisions` flag + `Idempotency-Key` | `{action,code,issuer?,trigger?,evidenceRef?,evidence?}` → decision record (`idempotent: true` on replay). Stable errors: `ASSET_LISTING_*` |
+| `GET /privacy/retention-policy` | `privacy` (privacy.controller.ts) | Public (optional key) | → published retention schedule: categories, windows, deletion methods, holds, SLA, `DELETION_*`/`RETENTION_*` codes. Always available, even when the flags are off |
+| `POST /privacy/deletion-requests/challenge` | `privacy` | Public (optional key) + `privacy.deletion_requests` flag | `{subject, subjectKind?}` → `{challengeId, challenge, expiresAt, purpose}`; the subject signs `challenge` with their Stellar key (self-custody) |
+| `POST /privacy/deletion-requests` | `privacy` | Public (optional key) + flag + `Idempotency-Key` | `{subject?, challengeId, signature}` → **202** with SLA dates and per-category outcomes. Errors: `DELETION_SIGNATURE_INVALID` (401), `DELETION_CHALLENGE_EXPIRED` (410), `DELETION_REQUEST_DUPLICATE` / `DELETION_IDEMPOTENCY_CONFLICT` (409), `DELETION_INTAKE_DISABLED` (403) |
+| `POST /privacy/deletion-requests/:id/cancel` | `privacy` | Public (optional key) | Signed cancel during the cooling-off window; `DELETION_NOT_CANCELLABLE` / `DELETION_ALREADY_EXECUTED` after it |
+| `GET /privacy/deletion-requests/:id` | `privacy` | `@RequireScopes('admin')` | Status, SLA dates, per-category outcomes/holds, salted subject hash (never the raw subject) |
+| `POST /admin/privacy/retention/sweep` | `privacy` (admin-privacy.controller.ts) | `@RequireScopes('admin')` + `privacy.retention_sweep` flag + `Idempotency-Key` | `{apply?: boolean, batchSize?: number}` → run result (`planned`, `failed`, `completed`). Dry-run unless `apply: true`; `RETENTION_SWEEP_DISABLED` (403) when the flag is off |
 
 ## Planned but not fully wired
 

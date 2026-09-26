@@ -14,6 +14,8 @@ import {
   getSessionInvalidReason,
   isSessionEnvironmentMismatch,
   resetInvalidSession,
+  restoreWalletSession,
+  rollbackSession,
 } from "../services/wallet-session";
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import type { WalletSession } from "../services/wallet-session";
@@ -238,6 +240,67 @@ describe("wallet-session service", () => {
       const session = await getWalletSession();
       expect(session).not.toBeNull();
       expect(session!.lastConfirmedAt).not.toBe(originalDate);
+    });
+  });
+
+  describe("restoreWalletSession", () => {
+    it("returns not restored when no session exists", async () => {
+      const result = await restoreWalletSession();
+      expect(result.restored).toBe(false);
+      expect(result.reason).toBe("none");
+      expect(result.session).toBeNull();
+    });
+
+    it("restores a valid session and touches timestamp", async () => {
+      const oldTime = new Date(Date.now() - 5000).toISOString();
+      await saveWalletSession({
+        ...VALID_SESSION,
+        lastConfirmedAt: oldTime,
+      });
+
+      const result = await restoreWalletSession();
+      expect(result.restored).toBe(true);
+      expect(result.reason).toBe("none");
+      expect(result.session?.publicKey).toBe(VALID_SESSION.publicKey);
+      expect(result.session?.lastConfirmedAt).not.toBe(oldTime);
+    });
+
+    it("resets and rejects expired session", async () => {
+      const eightDaysAgo = Date.now() - 8 * 24 * 60 * 60 * 1000;
+      await saveWalletSession({
+        ...VALID_SESSION,
+        connectedAt: eightDaysAgo,
+        lastConfirmedAt: new Date(eightDaysAgo).toISOString(),
+      });
+
+      const result = await restoreWalletSession();
+      expect(result.restored).toBe(false);
+      expect(result.reason).toBe("expired");
+      expect(await getWalletSession()).toBeNull();
+    });
+
+    it("resets and rejects environment mismatched session", async () => {
+      await saveWalletSession(VALID_SESSION, "staging");
+
+      const result = await restoreWalletSession("production");
+      expect(result.restored).toBe(false);
+      expect(result.reason).toBe("environment_mismatch");
+      expect(await getWalletSession()).toBeNull();
+    });
+  });
+
+  describe("rollbackSession", () => {
+    it("restores previous backup session snapshot", async () => {
+      await rollbackSession(VALID_SESSION);
+      const session = await getWalletSession();
+      expect(session?.publicKey).toBe(VALID_SESSION.publicKey);
+    });
+
+    it("clears session if backup session was null", async () => {
+      await saveWalletSession(VALID_SESSION);
+      await rollbackSession(null);
+      const session = await getWalletSession();
+      expect(session).toBeNull();
     });
   });
 });

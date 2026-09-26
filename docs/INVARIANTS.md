@@ -39,3 +39,11 @@ Zero-amount payments follow the same state machine but MUST NOT resultin any tok
 INV-10: Fee Ceiling
 
 Protocol fees collected per payment MUST NOT exceed the configuredmaximum fee percentage of the payment amount.
+
+---
+
+## Architectural Enforcement References
+
+- [CUSTODY-TRUST-THREAT-MODEL.md](./CUSTODY-TRUST-THREAT-MODEL.md): Full threat modeling, trust assumptions, and cryptographic custody boundary enforcement for INV-01 through INV-10.
+- [MAINNET-PROMOTION-AND-GOVERNANCE.md](./MAINNET-PROMOTION-AND-GOVERNANCE.md): Invariant verification suite requirements and multisig governance rules prior to Mainnet launch.
+- [CAPABILITY-MAP.md](./CAPABILITY-MAP.md): Current implementation status of on-chain and off-chain invariant enforcement.

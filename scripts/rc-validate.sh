@@ -1,0 +1,366 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────────────────────
+# rc-validate.sh – One-command release candidate validation
+#
+# Usage:
+#   ./scripts/rc-validate.sh                   # full gate, all stages
+#   ./scripts/rc-validate.sh --quick           # fast subset, no slow stages
+#   ./scripts/rc-validate.sh --stage lint,test # only these stages
+#   ./scripts/rc-validate.sh --list            # show stages and exit
+#   ./scripts/rc-validate.sh --json            # NDJSON result lines
+#   ./scripts/rc-validate.sh --allow-skip      # optional stages may SKIP
+#
+# This is the single entry point a release candidate must pass. It runs the
+# same checks, in the same order, as the CI workflows (ci.yml, backend.yml,
+# contract.yml, frontend-ci.yml). `.github/workflows/rc-validate.yml` calls
+# this exact script, so there is one definition of the gate rather than two
+# that drift apart.
+#
+# Stage outcomes
+#   PASS  – ran and succeeded
+#   FAIL  – ran and failed; the release candidate is blocked
+#   SKIP  – prerequisite toolchain unavailable (optional stages only)
+#
+# A SKIP fails the run by default: a candidate that silently skipped the
+# contract tests is not a release candidate. Pass --allow-skip (or set
+# RC_ALLOW_SKIP=1) when a skip is genuinely acceptable for the change.
+#
+# Environment
+#   STELLAR_NETWORK  testnet (default). mainnet is refused — a candidate is
+#                    validated against testnet only, per
+#                    docs/adr/0002-testnet-first-mainnet-feature-gated.md.
+#   RC_BASE_REF      base ref for the capability-map diff (default origin/main)
+#   RC_ALLOW_SKIP    "1" to treat optional skips as acceptable
+# ─────────────────────────────────────────────────────────────────────────────
+set -uo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$REPO_ROOT" || exit 1
+
+JSON=0
+QUICK=0
+LIST_ONLY=0
+ALLOW_SKIP="${RC_ALLOW_SKIP:-0}"
+STAGE_FILTER=""
+RC_BASE_REF="${RC_BASE_REF:-origin/main}"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --quick)      QUICK=1 ;;
+    --json)       JSON=1 ;;
+    --list)       LIST_ONLY=1 ;;
+    --allow-skip) ALLOW_SKIP=1 ;;
+    --stage)      shift; STAGE_FILTER="${1:-}" ;;
+    --stage=*)    STAGE_FILTER="${1#*=}" ;;
+    -h|--help)    sed -n '2,36p' "$0"; exit 0 ;;
+    *)            echo "Unknown option: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+# ── stage registry ───────────────────────────────────────────────────────────
+# "name|required_tool|optional|description"
+# The tool field names the binary that must exist for the stage to run at all.
+# For secret-scan that is `detect-secrets`, not `python3`: secret-scan.sh exits
+# non-zero when its own dependency is absent, which would otherwise be reported
+# as a scan failure rather than an honest SKIP.
+FULL_STAGES=(
+  "env|pnpm|0|Pinned toolchain versions match CI"
+  "install|pnpm|0|Workspace dependencies resolve from the lockfile"
+  "secret-scan|detect-secrets|1|No new secrets versus .secrets.baseline"
+  "lint|pnpm|0|ESLint clean across the workspace"
+  "type-check|pnpm|0|tsc --noEmit clean across the workspace"
+  "build|pnpm|0|All packages build"
+  "test|pnpm|0|Backend unit and integration suites pass coverage thresholds"
+  "fuzz|pnpm|1|Property-based suites (fast-check)"
+  "contract|cargo|1|cargo fmt + clippy + test in app/contract"
+  "openapi|pnpm|0|Committed openapi.json matches the code"
+  "capability-map|git|1|Capability-map rows changed alongside behavior"
+)
+
+QUICK_STAGES=(
+  "env|pnpm|0|Pinned toolchain versions match CI"
+  "install|pnpm|0|Workspace dependencies resolve from the lockfile"
+  "secret-scan|detect-secrets|1|No new secrets versus .secrets.baseline"
+  "lint|pnpm|0|ESLint clean across the workspace"
+  "type-check|pnpm|0|tsc --noEmit clean across the workspace"
+)
+
+if [ "$QUICK" -eq 1 ]; then STAGES=("${QUICK_STAGES[@]}"); else STAGES=("${FULL_STAGES[@]}"); fi
+
+if [ -n "$STAGE_FILTER" ]; then
+  FILTERED=()
+  IFS=',' read -ra WANTED <<< "$STAGE_FILTER"
+  for stage in "${STAGES[@]}"; do
+    sname="${stage%%|*}"
+    for w in "${WANTED[@]}"; do
+      if [ "$sname" = "$(echo "$w" | tr -d '[:space:]')" ]; then FILTERED+=("$stage"); break; fi
+    done
+  done
+  STAGES=("${FILTERED[@]:-}")
+fi
+
+if [ "$LIST_ONLY" -eq 1 ]; then
+  echo "Release candidate stages:"
+  for stage in "${STAGES[@]}"; do
+    IFS='|' read -r s tool opt desc <<< "$stage"
+    printf '  %-14s tool=%-8s optional=%s  %s\n' "$s" "$tool" "$opt" "$desc"
+  done
+  exit 0
+fi
+
+# ── preflight: refuse mainnet ────────────────────────────────────────────────
+if [ "${STELLAR_NETWORK:-testnet}" = "mainnet" ]; then
+  log_msg() { printf '%s\n' "$*" >&2; }
+  log_msg "::error::STELLAR_NETWORK=mainnet is refused. A release candidate is"
+  log_msg "        validated against testnet only. Enable mainnet behaviour as a"
+  log_msg "        separate, reviewed rollout after promotion (ADR 0002)."
+  exit 2
+fi
+
+declare -a RESULT_NAMES=() RESULT_STATES=() RESULT_MS=() RESULT_DETAILS=()
+FAILURES=0
+SKIPS=0
+PASSES=0
+START_NS=$(date +%s%N 2>/dev/null || echo 0)
+
+GH_NOTE=0
+if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+  GH_NOTE=1
+  { echo "### Release candidate validation"; echo ""
+    echo "| stage | result | duration | detail |"; echo "|---|---|---|---|"; } >> "$GITHUB_STEP_SUMMARY"
+fi
+
+now_ms() { echo $(( ($(date +%s%N 2>/dev/null || echo 0)) / 1000000 )); }
+
+record() {
+  # record <name> <state> <duration_ms> <detail>
+  RESULT_NAMES+=("$1"); RESULT_STATES+=("$2"); RESULT_MS+=("$3"); RESULT_DETAILS+=("$4")
+  case "$2" in
+    PASS) icon="✔" ;;
+    FAIL) icon="✘" ;;
+    SKIP) icon="⊘" ;;
+    *)    icon="?" ;;
+  esac
+  printf '%s %-14s %7sms  %s\n' "$icon" "$1" "$3" "$4" >&2
+  esc=$(printf '%s' "$4" | sed 's/\\/\\\\/g; s/"/\\"/g; s/|/\\|/g')
+  [ "$JSON" -eq 1 ] && printf '{"stage":"%s","result":"%s","duration_ms":%s,"detail":"%s"}\n' "$1" "$2" "$3" "$esc"
+  [ "$GH_NOTE" -eq 1 ] && echo "| \`$1\` | **$2** | ${3}ms | $esc |" >> "$GITHUB_STEP_SUMMARY"
+  case "$2" in
+    FAIL) FAILURES=$((FAILURES + 1)) ;;
+    SKIP) SKIPS=$((SKIPS + 1)) ;;
+    *)    PASSES=$((PASSES + 1)) ;;
+  esac
+  return 0
+}
+
+log() { printf '%s\n' "$*" >&2; }
+
+log "Release candidate validation"
+log "  repo:   $REPO_ROOT"
+log "  commit: $(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+log "  branch: $(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+log "  network: ${STELLAR_NETWORK:-testnet}"
+log "  mode:    $([ "$QUICK" -eq 1 ] && echo quick || echo full)"
+log ""
+
+for stage in "${STAGES[@]}"; do
+  IFS='|' read -r name tool optional desc <<< "$stage"
+  t0=$(now_ms)
+
+  # Missing toolchain: optional stages SKIP, required stages FAIL. A required
+  # stage is one whose absence means we cannot honestly call the candidate
+  # validated.
+  if [ "$tool" != "-" ] && ! command -v "$tool" >/dev/null 2>&1; then
+    elapsed=$(( $(now_ms) - t0 ))
+    if [ "$optional" = "1" ]; then
+      record "$name" "SKIP" "$elapsed" "$tool not installed"
+    else
+      record "$name" "FAIL" "$elapsed" "$tool not installed (required)"
+    fi
+    continue
+  fi
+
+  ok=0
+  detail=""
+
+  case "$name" in
+    env)
+      # CI pins Node 20 (.github/workflows/ci.yml). Running the gate on an
+      # older runtime can pass here and fail there, so it is a hard check.
+      node_major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+      if [ "$node_major" -lt 20 ]; then
+        detail="FAILED: node $(node -v) is below the CI floor of 20"
+      else
+        ok=1
+        detail="node $(node -v), packageManager=$(node -p "require('./package.json').packageManager" 2>/dev/null || echo unset)"
+      fi
+      ;;
+
+    install)
+      # --frozen-lockfile is the point: a candidate whose lockfile does not
+      # resolve is not reproducible, which is the property being validated.
+      if pnpm install --frozen-lockfile >/tmp/rc-install.log 2>&1; then
+        ok=1; detail="lockfile resolved"
+      else
+        detail="FAILED: pnpm install --frozen-lockfile (see /tmp/rc-install.log)"
+      fi
+      ;;
+
+    secret-scan)
+      if bash scripts/secret-scan.sh --verify >/tmp/rc-secrets.log 2>&1; then
+        ok=1; detail="no new secrets vs .secrets.baseline"
+      else
+        detail="FAILED: secret scan (see /tmp/rc-secrets.log)"
+      fi
+      ;;
+
+    lint)
+      if pnpm lint >/tmp/rc-lint.log 2>&1; then
+        ok=1; detail="eslint clean"
+      else
+        detail="FAILED: pnpm lint (see /tmp/rc-lint.log)"
+      fi
+      ;;
+
+    type-check)
+      if pnpm type-check >/tmp/rc-typecheck.log 2>&1; then
+        ok=1; detail="tsc --noEmit clean"
+      else
+        detail="FAILED: pnpm type-check (see /tmp/rc-typecheck.log)"
+      fi
+      ;;
+
+    build)
+      if pnpm build >/tmp/rc-build.log 2>&1; then
+        ok=1; detail="all packages built"
+      else
+        detail="FAILED: pnpm build (see /tmp/rc-build.log)"
+      fi
+      ;;
+
+    test)
+      # Kept separate, as backend.yml does, so a red build names its layer.
+      if NODE_ENV=test STELLAR_NETWORK=testnet \
+         pnpm --filter @quickex/backend test:unit >/tmp/rc-test-unit.log 2>&1; then
+        if NODE_ENV=test STELLAR_NETWORK=testnet \
+           pnpm --filter @quickex/backend test:int >/tmp/rc-test-int.log 2>&1; then
+          ok=1; detail="unit + integration suites pass with coverage thresholds"
+        else
+          detail="FAILED: integration suite (see /tmp/rc-test-int.log)"
+        fi
+      else
+        detail="FAILED: unit suite (see /tmp/rc-test-unit.log)"
+      fi
+      ;;
+
+    fuzz)
+      if NODE_ENV=test STELLAR_NETWORK=testnet \
+         pnpm --filter @quickex/backend test:fuzz >/tmp/rc-fuzz.log 2>&1; then
+        ok=1; detail="property-based suites pass"
+      else
+        detail="FAILED: fuzz suites (see /tmp/rc-fuzz.log)"
+      fi
+      ;;
+
+    contract)
+      # Same three checks, same order, as .github/workflows/contract.yml.
+      if ( cd app/contract \
+           && cargo fmt --all -- --check >/tmp/rc-fmt.log 2>&1 \
+           && cargo clippy --all-targets --all-features -- -D warnings >/tmp/rc-clippy.log 2>&1 \
+           && cargo test >/tmp/rc-cargo-test.log 2>&1 ); then
+        ok=1; detail="cargo fmt + clippy + test clean"
+      else
+        detail="FAILED: contract checks (see /tmp/rc-fmt.log, /tmp/rc-clippy.log, /tmp/rc-cargo-test.log)"
+      fi
+      ;;
+
+    openapi)
+      # Mirrors the "OpenAPI spec must not diverge" step in backend.yml: the
+      # spec is regenerated and diffed against the committed file. Placeholder
+      # credentials are required because the export boots the Nest app.
+      if ( cd app/backend \
+           && NODE_ENV=test NETWORK=testnet \
+              SUPABASE_URL=https://spec-export.supabase.co \
+              SUPABASE_ANON_KEY=spec-export-key \
+              pnpm run docs:export:check >/tmp/rc-openapi.log 2>&1 ); then
+        ok=1; detail="openapi.json matches the code"
+      else
+        detail="FAILED: openapi.json diverged (see /tmp/rc-openapi.log)"
+      fi
+      ;;
+
+    capability-map)
+      # ADR 0004: changing shipped behaviour updates docs/CAPABILITY-MAP.md in
+      # the same PR. This reports the blast radius; a row changed without a
+      # matching behavioural change (or vice versa) is a review finding, not a
+      # machine-decidable failure, so it always passes and always prints.
+      if git rev-parse --verify "$RC_BASE_REF" >/dev/null 2>&1; then
+        range="$RC_BASE_REF...HEAD"
+      else
+        range="HEAD~1..HEAD"
+      fi
+      changed="$(git diff --name-only $range 2>/dev/null | wc -l | tr -d ' ')"
+      map_rows="$(git diff --name-only $range 2>/dev/null | grep -c 'docs/CAPABILITY-MAP.md' || true)"
+      ok=1
+      detail="${changed} file(s) changed, ${map_rows} capability-map edit(s) — confirm rows match behavior"
+      ;;
+
+    *)
+      ok=0; detail="FAILED: unknown stage '$name'"
+      ;;
+  esac
+
+  elapsed=$(( $(now_ms) - t0 ))
+  if [ "$ok" -eq 1 ]; then
+    record "$name" "PASS" "$elapsed" "$detail"
+  else
+    record "$name" "FAIL" "$elapsed" "$detail"
+  fi
+done
+
+TOTAL_MS=$(( $(now_ms) - (START_NS / 1000000) ))
+
+log ""
+log "─────────────────────────────────────────────"
+log "  ${#RESULT_NAMES[@]} stages in ${TOTAL_MS}ms — pass $PASSES  fail $FAILURES  skip $SKIPS"
+log "─────────────────────────────────────────────"
+
+if [ "$GH_NOTE" -eq 1 ]; then
+  { echo ""; echo "**${#RESULT_NAMES[@]} stages in ${TOTAL_MS}ms — pass $PASSES, fail $FAILURES, skip $SKIPS**"; } \
+    >> "$GITHUB_STEP_SUMMARY"
+fi
+
+# Exit-code contract, in priority order:
+#   2 – refused (mainnet, or bad arguments). Nothing ran; do not report a verdict.
+#   1 – rejected. At least one stage failed, or an optional stage was skipped
+#       without --allow-skip. Both mean "not validated", and both block a merge.
+#   0 – accepted.
+if [ "$FAILURES" -gt 0 ]; then
+  log ""
+  log "::error::release candidate REJECTED — $FAILURES stage(s) failed"
+  [ "$JSON" -eq 1 ] && printf '{"result":"REJECTED","reason":"failures","failures":%d,"skips":%d}\n' "$FAILURES" "$SKIPS"
+  exit 1
+fi
+
+if [ "$SKIPS" -gt 0 ] && [ "$ALLOW_SKIP" != "1" ]; then
+  log ""
+  log "::error::release candidate REJECTED — $SKIPS optional stage(s) were skipped."
+  log "        Install the missing toolchain, or re-run with --allow-skip if a"
+  log "        skip is genuinely acceptable for this change."
+  [ "$JSON" -eq 1 ] && printf '{"result":"REJECTED","reason":"skips","failures":0,"skips":%d}\n' "$SKIPS"
+  exit 1
+fi
+
+if [ "$SKIPS" -gt 0 ]; then
+  log ""
+  log "::warning::release candidate ACCEPTED WITH SKIPS — $SKIPS optional stage(s) did not run."
+  log "         The candidate is not fully covered; record which stages were skipped."
+  [ "$JSON" -eq 1 ] && printf '{"result":"ACCEPTED_WITH_SKIPS","failures":0,"skips":%d}\n' "$SKIPS"
+  exit 0
+fi
+
+log ""
+log "::notice::release candidate ACCEPTED — all ${#RESULT_NAMES[@]} stages passed"
+[ "$JSON" -eq 1 ] && printf '{"result":"ACCEPTED","failures":0,"skips":0}\n'
+exit 0

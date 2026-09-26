@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { MarketplaceListing, formatCountdown, placeBid } from "@/hooks/marketplaceApi";
+import { resolvePublicKey } from "@/lib/publicKey";
 import { useFocusTrap } from "@/hooks/useFocusTrap";
 import { SigningSummary } from "./SigningSummary";
 import { detectWallets } from "@/lib/wallet/detectWallets";

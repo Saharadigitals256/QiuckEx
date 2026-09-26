@@ -168,6 +168,24 @@ describe('JobQueueService', () => {
       expect(repository.createJob).toHaveBeenCalled();
     });
 
+    it('should pass an idempotency key through to job persistence', async () => {
+      const payload = { webhookUrl: 'https://example.com', eventType: 'payment' };
+      registry.isRegistered.mockReturnValue(true);
+      registry.getHandler.mockReturnValue(mockHandler);
+      registry.getPolicy.mockReturnValue(mockPolicy);
+      repository.createJob.mockResolvedValue({ id: 'job-123' } as Job);
+
+      await service.enqueue(JobType.WEBHOOK_DELIVERY, payload, 'execution-id:0');
+
+      expect(repository.createJob).toHaveBeenCalledWith(
+        JobType.WEBHOOK_DELIVERY,
+        payload,
+        5,
+        expect.any(Date),
+        'execution-id:0',
+      );
+    });
+
     it('should reject invalid payloads with PayloadValidationError', async () => {
       // Arrange
       const payload = { invalid: 'data' };

@@ -20,7 +20,7 @@ export class EscrowEventRepository {
    * The unique constraint on (tx_hash, commitment, event_type) ensures
    * that re-processing the same event is a no-op.
    */
-  async upsertEvent(event: EscrowEvent): Promise<void> {
+  async upsertEvent(event: EscrowEvent): Promise<boolean> {
     const client = this.supabase.getClient();
 
     const row: Record<string, unknown> = {
@@ -42,12 +42,13 @@ export class EscrowEventRepository {
           : null,
     };
 
-    const { error } = await client
+    const { data, error } = await client
       .from("escrow_events")
       .upsert(row, {
         onConflict: "tx_hash,commitment,event_type",
         ignoreDuplicates: true,
-      });
+      })
+      .select("id");
 
     if (error) {
       this.logger.error(
@@ -59,5 +60,6 @@ export class EscrowEventRepository {
     this.logger.debug(
       `Persisted ${event.eventType} commitment=${event.commitment} ledger=${event.ledgerSequence}`,
     );
+    return Boolean(data?.length);
   }
 }

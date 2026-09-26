@@ -62,4 +62,11 @@ export interface ReceiptData {
   network: NetworkMetadata;
   timeline: TimelineEvent[];
   supportBundleReference?: string;
+  verification?: {
+    verified: boolean;
+    computedHash?: string;
+    verifiedAt: string;
+    degradedMode?: boolean;
+    status: 'valid' | 'invalid' | 'unverified';
+  };
 }

@@ -28,6 +28,17 @@ export class MetricsService implements OnModuleInit {
   private abuseSignalsByOutcome: client.Counter<string>;
   private abuseScoresHistogram: client.Histogram<string>;
   private paymentLinksExpired: client.Counter<string>;
+  private assetListingDecisionsTotal: client.Counter<string>;
+  private assetListingDecisionDuration: client.Histogram<string>;
+  private assetListingAssetsServed: client.Gauge<string>;
+  private assetListingAssetsSuspended: client.Gauge<string>;
+  private assetListingPolicyDenials: client.Counter<string>;
+  private deletionRequestsTotal: client.Counter<string>;
+  private deletionRequestDuration: client.Histogram<string>;
+  private deletionProofFailures: client.Counter<string>;
+  private retentionSweepRecords: client.Counter<string>;
+  private retentionSweepDuration: client.Histogram<string>;
+  private retentionRecordsDue: client.Gauge<string>;
   private initialized = false;
 
   onModuleInit() {
@@ -180,6 +191,76 @@ export class MetricsService implements OnModuleInit {
         help: "Total number of payment links marked as expired by the expiry sweep",
       });
 
+      // ── Governance capabilities (issues #306, #307) ──────────────────────
+      this.assetListingDecisionsTotal = new client.Counter({
+        name: "asset_listing_decisions_total",
+        help: "Total governed asset listing decisions",
+        labelNames: ["action", "outcome", "tier"],
+      });
+
+      this.assetListingDecisionDuration = new client.Histogram({
+        name: "asset_listing_decision_duration_seconds",
+        help: "Duration of asset listing decision handling in seconds",
+        labelNames: ["action"],
+        buckets: [0.005, 0.01, 0.05, 0.1, 0.5, 1, 2],
+      });
+
+      this.assetListingAssetsServed = new client.Gauge({
+        name: "asset_listing_assets_served",
+        help: "Number of assets currently served to clients, by listing tier",
+        labelNames: ["tier"],
+      });
+
+      this.assetListingAssetsSuspended = new client.Gauge({
+        name: "asset_listing_assets_suspended",
+        help: "Number of suspended assets, by trigger",
+        labelNames: ["trigger"],
+      });
+
+      this.assetListingPolicyDenials = new client.Counter({
+        name: "asset_listing_policy_denials_total",
+        help: "Asset listing decisions rejected by policy (validation, authorization or registry failure)",
+        labelNames: ["reason"],
+      });
+
+      this.deletionRequestsTotal = new client.Counter({
+        name: "deletion_requests_total",
+        help: "Total privacy deletion requests by status and deletion method",
+        labelNames: ["status", "method"],
+      });
+
+      this.deletionRequestDuration = new client.Histogram({
+        name: "deletion_request_duration_seconds",
+        help: "Duration of privacy deletion request phases (proof, schedule, execute)",
+        labelNames: ["phase"],
+        buckets: [0.005, 0.05, 0.5, 1, 5, 30],
+      });
+
+      this.deletionProofFailures = new client.Counter({
+        name: "deletion_proof_failures_total",
+        help: "Deletion request proof failures (never carries the attempted signature)",
+        labelNames: ["reason"],
+      });
+
+      this.retentionSweepRecords = new client.Counter({
+        name: "retention_sweep_records_total",
+        help: "Records processed by a retention sweep, by category, method and outcome",
+        labelNames: ["category", "method", "outcome"],
+      });
+
+      this.retentionSweepDuration = new client.Histogram({
+        name: "retention_sweep_duration_seconds",
+        help: "Duration of retention sweeps in seconds",
+        labelNames: ["mode"],
+        buckets: [0.05, 0.5, 1, 5, 30, 120],
+      });
+
+      this.retentionRecordsDue = new client.Gauge({
+        name: "retention_records_due",
+        help: "Records past their retention window and awaiting deletion, by category",
+        labelNames: ["category"],
+      });
+
       this.register.registerMetric(this.httpRequestDuration);
       this.register.registerMetric(this.httpRequestTotal);
       this.register.registerMetric(this.rateLimitedRequestsTotal);
@@ -204,6 +285,17 @@ export class MetricsService implements OnModuleInit {
       this.register.registerMetric(this.abuseSignalsByOutcome);
       this.register.registerMetric(this.abuseScoresHistogram);
       this.register.registerMetric(this.paymentLinksExpired);
+      this.register.registerMetric(this.assetListingDecisionsTotal);
+      this.register.registerMetric(this.assetListingDecisionDuration);
+      this.register.registerMetric(this.assetListingAssetsServed);
+      this.register.registerMetric(this.assetListingAssetsSuspended);
+      this.register.registerMetric(this.assetListingPolicyDenials);
+      this.register.registerMetric(this.deletionRequestsTotal);
+      this.register.registerMetric(this.deletionRequestDuration);
+      this.register.registerMetric(this.deletionProofFailures);
+      this.register.registerMetric(this.retentionSweepRecords);
+      this.register.registerMetric(this.retentionSweepDuration);
+      this.register.registerMetric(this.retentionRecordsDue);
 
       this.initialized = true;
     } catch (error) {
@@ -454,6 +546,92 @@ export class MetricsService implements OnModuleInit {
     if (!this.initialized || !this.paymentLinksExpired) return;
     try {
       this.paymentLinksExpired.inc();
+    } catch (error) {}
+  }
+
+  // ── Governance metrics (issues #306, #307) ───────────────────────────────
+
+  recordAssetListingDecision(
+    action: string,
+    outcome: "applied" | "rejected" | "replayed",
+    tier: string,
+    durationSeconds: number,
+  ) {
+    if (!this.initialized) return;
+    try {
+      this.assetListingDecisionsTotal?.labels(action, outcome, tier).inc();
+      this.assetListingDecisionDuration?.labels(action).observe(durationSeconds);
+    } catch (error) {}
+  }
+
+  setAssetListingServedAssets(tier: string, count: number) {
+    if (!this.initialized || !this.assetListingAssetsServed) return;
+    try {
+      this.assetListingAssetsServed.labels(tier).set(count);
+    } catch (error) {}
+  }
+
+  recordAssetListingSuspendedAsset(trigger: string) {
+    if (!this.initialized || !this.assetListingAssetsSuspended) return;
+    try {
+      this.assetListingAssetsSuspended.labels(trigger).inc();
+    } catch (error) {}
+  }
+
+  recordAssetListingPolicyDenial(reason: string) {
+    if (!this.initialized || !this.assetListingPolicyDenials) return;
+    try {
+      this.assetListingPolicyDenials.labels(reason).inc();
+    } catch (error) {}
+  }
+
+  recordDeletionRequest(status: string, method: string) {
+    if (!this.initialized || !this.deletionRequestsTotal) return;
+    try {
+      this.deletionRequestsTotal.labels(status, method).inc();
+    } catch (error) {}
+  }
+
+  observeDeletionRequestPhase(
+    phase: "proof" | "schedule" | "execute",
+    durationSeconds: number,
+  ) {
+    if (!this.initialized || !this.deletionRequestDuration) return;
+    try {
+      this.deletionRequestDuration.labels(phase).observe(durationSeconds);
+    } catch (error) {}
+  }
+
+  recordDeletionProofFailure(reason: "expired" | "unknown" | "invalid_signature") {
+    if (!this.initialized || !this.deletionProofFailures) return;
+    try {
+      this.deletionProofFailures.labels(reason).inc();
+    } catch (error) {}
+  }
+
+  recordRetentionSweepRecord(
+    category: string,
+    method: string,
+    outcome: "deleted" | "narrowed" | "retained" | "failed",
+    count = 1,
+  ) {
+    if (!this.initialized || !this.retentionSweepRecords) return;
+    try {
+      this.retentionSweepRecords.labels(category, method, outcome).inc(count);
+    } catch (error) {}
+  }
+
+  observeRetentionSweepDuration(mode: "dry_run" | "apply", durationSeconds: number) {
+    if (!this.initialized || !this.retentionSweepDuration) return;
+    try {
+      this.retentionSweepDuration.labels(mode).observe(durationSeconds);
+    } catch (error) {}
+  }
+
+  setRetentionRecordsDue(category: string, count: number) {
+    if (!this.initialized || !this.retentionRecordsDue) return;
+    try {
+      this.retentionRecordsDue.labels(category).set(count);
     } catch (error) {}
   }
 }

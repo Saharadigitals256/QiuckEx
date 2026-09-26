@@ -71,3 +71,24 @@ jest.mock("expo-task-manager", () => ({
   defineTask: jest.fn(),
   isTaskRegisteredAsync: jest.fn(async () => false),
 }));
+
+jest.mock("uuid", () => ({
+  v4: () => "mock-uuid-1234",
+}));
+
+jest.mock("@react-native-community/netinfo", () => ({
+  addEventListener: jest.fn(() => jest.fn()),
+  fetch: jest.fn(async () => ({
+    isConnected: true,
+    isInternetReachable: true,
+    type: "wifi",
+    details: {},
+  })),
+  useNetInfo: jest.fn(() => ({
+    isConnected: true,
+    isInternetReachable: true,
+    type: "wifi",
+  })),
+}));
+
+

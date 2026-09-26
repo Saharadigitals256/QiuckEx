@@ -9,6 +9,7 @@ import {
   retryQueuedAction,
   processOfflineQueue,
   registerActionHandler,
+  cancelQueuedAction,
 } from "../services/offline-queue";
 
 jest.mock("@react-native-async-storage/async-storage", () => {
@@ -139,5 +140,114 @@ describe("Offline Action Queue Service", () => {
     expect(statusMap.get(act1.id)?.attempts).toBe(1);
     expect(statusMap.get(act2.id)?.attempts).toBe(1);
     expect(statusMap.get(act3.id)?.attempts).toBe(0);
+  });
+
+  describe("Idempotency deduplication", () => {
+    it("deduplicates action when idempotencyKey is already pending or completed", async () => {
+      const first = await enqueueAction(SUCCESS_ACTION, { msg: "hello" }, {
+        idempotencyKey: "unique-key-1",
+      });
+
+      const second = await enqueueAction(SUCCESS_ACTION, { msg: "hello again" }, {
+        idempotencyKey: "unique-key-1",
+      });
+
+      expect(second.id).toBe(first.id);
+      const queue = await getOfflineQueue();
+      expect(queue).toHaveLength(1);
+
+      // Now complete it
+      await retryQueuedAction(first.id);
+
+      // Enqueueing again with same key returns existing completed action
+      const third = await enqueueAction(SUCCESS_ACTION, { msg: "third" }, {
+        idempotencyKey: "unique-key-1",
+      });
+      expect(third.id).toBe(first.id);
+      expect(third.status).toBe("completed");
+    });
+  });
+
+  describe("Dependency ordering", () => {
+    it("waits for predecessor dependency to complete before executing dependent action", async () => {
+      const step1 = await enqueueAction(SUCCESS_ACTION, { step: 1 }, {
+        idempotencyKey: "step-1",
+      });
+      const step2 = await enqueueAction(SUCCESS_ACTION, { step: 2 }, {
+        dependsOn: ["step-1"],
+      });
+
+      // Retrying step2 directly while step1 is pending is deferred
+      const directRetry = await retryQueuedAction(step2.id);
+      expect(directRetry?.status).toBe("pending");
+      expect(directRetry?.attempts).toBe(0);
+
+      // Run processOfflineQueue which resolves in dependency order
+      await processOfflineQueue();
+
+      const queue = await getOfflineQueue();
+      const s1 = queue.find((i) => i.id === step1.id);
+      const s2 = queue.find((i) => i.id === step2.id);
+
+      expect(s1?.status).toBe("completed");
+      expect(s2?.status).toBe("completed");
+      expect(s2?.attempts).toBe(1);
+    });
+
+    it("fails dependent action if its dependency fails", async () => {
+      const failedDep = await enqueueAction(FAILURE_ACTION, { fail: true }, {
+        idempotencyKey: "failed-dep-1",
+      });
+      const dependent = await enqueueAction(SUCCESS_ACTION, { run: false }, {
+        dependsOn: ["failed-dep-1"],
+      });
+
+      // Process queue - first action will fail, second action should cascade fail
+      await processOfflineQueue();
+
+      const queue = await getOfflineQueue();
+      const dep = queue.find((i) => i.id === dependent.id);
+      expect(dep?.status).toBe("failed");
+      expect(dep?.failureReason).toContain("failed");
+    });
+  });
+
+  describe("Dead letter & Cancellation", () => {
+    it("transitions to dead_letter after maxAttempts exceeded", async () => {
+      const action = await enqueueAction(FAILURE_ACTION, { max: true }, {
+        maxAttempts: 2,
+      });
+
+      // Attempt 1
+      await retryQueuedAction(action.id);
+      let item = (await getOfflineQueue()).find((i) => i.id === action.id);
+      expect(item?.status).toBe("failed");
+      expect(item?.attempts).toBe(1);
+
+      // Attempt 2 (reaches maxAttempts, force retry bypassing backoff delay)
+      await retryQueuedAction(action.id, true);
+      item = (await getOfflineQueue()).find((i) => i.id === action.id);
+      expect(item?.status).toBe("dead_letter");
+      expect(item?.attempts).toBe(2);
+      expect(item?.failureReason).toContain("Max retry attempts");
+    });
+
+    it("cancels an action and cascades cancellation to dependent actions", async () => {
+      const actA = await enqueueAction(SUCCESS_ACTION, { a: 1 });
+      const actB = await enqueueAction(SUCCESS_ACTION, { b: 2 }, {
+        dependsOn: [actA.id],
+      });
+
+      await cancelQueuedAction(actA.id, true);
+
+      const queue = await getOfflineQueue();
+      const itemA = queue.find((i) => i.id === actA.id);
+      const itemB = queue.find((i) => i.id === actB.id);
+
+      expect(itemA?.status).toBe("failed");
+      expect(itemA?.failureReason).toContain("Cancelled");
+      expect(itemB?.status).toBe("failed");
+      expect(itemB?.failureReason).toContain("Cancelled");
+    });
   });
 });

@@ -128,10 +128,17 @@ async function generateInviteLink(
 // Helpers
 // ---------------------------------------------------------------------------
 
-function formatDate(iso: string | null): string {
+function formatDate(iso: string | null | undefined): string {
   if (!iso) return "Never";
-  const d = new Date(iso);
-  return d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+  try {
+    return new Date(iso).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  } catch {
+    return "Never";
+  }
 }
 
 function roleLabel(role: TeamRole): string {
@@ -181,18 +188,6 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-function formatDate(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
-  } catch {
-    return "—";
-  }
-}
 
 function formatTimeAgo(iso: string | null | undefined): string {
   if (!iso) return "Never";
@@ -889,174 +884,6 @@ export default function TeamSettings() {
               </button>
             </div>
           </div>
-        ) : selectedTeam ? (
-          <>
-            {/* Member list */}
-            <div className="rounded-3xl bg-card border border-border overflow-hidden mb-8">
-              <div className="p-6 border-b border-border flex flex-wrap justify-between items-center gap-4">
-                <div>
-                  <h2 className="text-xl font-bold">{selectedTeam.name}</h2>
-                  {selectedTeam.description && (
-                    <p className="text-subtle text-sm mt-1">{selectedTeam.description}</p>
-                  )}
-                </div>
-                <div className="flex gap-3">
-                  {canManage && (
-                    <button
-                      onClick={() => void handleGenerateInviteLink()}
-                      className="px-4 py-2 border border-border-strong text-sm font-semibold rounded-xl hover:bg-surface transition"
-                    >
-                      🔗 Invite Link
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* Invite link banner */}
-              {inviteLink && (
-                <div className="px-6 py-4 bg-indigo-500/5 border-b border-border flex flex-col sm:flex-row gap-3 items-start sm:items-center">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs text-subtle mb-1">Invite link (expires {formatDate(inviteLinkExpiry)})</p>
-                    <code className="text-xs text-indigo-400 break-all">{inviteLink}</code>
-                  </div>
-                  <button
-                    onClick={() => void navigator.clipboard.writeText(inviteLink ?? "").then(() => showToast("Copied!"))}
-                    className="px-3 py-1.5 text-xs font-semibold bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 rounded-lg hover:bg-indigo-500/20 transition shrink-0"
-                  >
-                    Copy
-                  </button>
-                </div>
-              )}
-
-              <div className="overflow-x-auto">
-                <table className="w-full text-left">
-                  <thead>
-                    <tr className="text-subtle text-xs font-bold uppercase tracking-wider border-b border-border">
-                      <th className="px-6 py-4">Member</th>
-                      <th className="px-6 py-4">Role</th>
-                      <th className="px-6 py-4">Joined</th>
-                      <th className="px-6 py-4">Last Active</th>
-                      <th className="px-6 py-4">Status</th>
-                      <th className="px-6 py-4 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {selectedTeam.members.map((member) => (
-                      <tr key={member.id} className="hover:bg-card/[0.02] transition">
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-3">
-                            <div className="w-9 h-9 bg-surface-strong rounded-full flex items-center justify-center font-bold text-indigo-400 text-sm shrink-0">
-                              {member.email[0]?.toUpperCase()}
-                            </div>
-                            <p className="text-sm font-semibold truncate max-w-[200px]">{member.email}</p>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          {canManage && member.role !== "owner" ? (
-                            <select
-                              value={member.role}
-                              onChange={(e) =>
-                                void handleRoleChange(
-                                  member,
-                                  e.target.value as Exclude<TeamRole, "owner">,
-                                )
-                              }
-                              className="bg-card border border-border-strong rounded-lg px-2 py-1 text-sm outline-none focus:border-indigo-500 transition"
-                            >
-                              <option value="admin">Admin</option>
-                              <option value="member">Member</option>
-                              <option value="viewer">Viewer</option>
-                            </select>
-                          ) : (
-                            <span
-                              className={`px-2.5 py-1 rounded-lg text-xs font-bold border ${roleBadgeClass(member.role)}`}
-                            >
-                              {roleLabel(member.role)}
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-subtle">
-                          {formatDate(member.joinedAt)}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-subtle">
-                          {formatDate(member.lastActiveAt)}
-                        </td>
-                        <td className="px-6 py-4">
-                          <span
-                            className={`px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-widest ${
-                              member.status === "active"
-                                ? "bg-emerald-500/10 text-emerald-500"
-                                : "bg-amber-500/10 text-amber-500"
-                            }`}
-                          >
-                            {member.status}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                          {canManage && member.role !== "owner" && (
-                            <button
-                              onClick={() => void handleRemoveMember(member)}
-                              className="p-2 text-subtle hover:text-red-400 transition"
-                              title="Remove member"
-                            >
-                              🗑️
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* Invite form */}
-            {canManage && (
-              <div className="rounded-3xl bg-card border border-border p-6 mb-8">
-                <h2 className="text-lg font-bold mb-4">Invite a member</h2>
-                <div className="flex flex-col sm:flex-row gap-3">
-                  <input
-                    type="email"
-                    value={inviteEmail}
-                    onChange={(e) => setInviteEmail(e.target.value)}
-                    placeholder="Email address"
-                    className="flex-1 bg-surface border border-border-strong rounded-xl px-4 py-2 text-sm outline-none focus:border-indigo-500 transition"
-                  />
-                  <select
-                    value={inviteRole}
-                    onChange={(e) => setInviteRole(e.target.value as Exclude<TeamRole, "owner">)}
-                    className="bg-surface border border-border-strong rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-500 transition"
-                  >
-                    <option value="admin">Admin</option>
-                    <option value="member">Member</option>
-                    <option value="viewer">Viewer</option>
-                  </select>
-                  <button
-                    onClick={() => void handleInvite()}
-                    disabled={inviting || !inviteEmail.trim()}
-                    className="px-5 py-2 bg-indigo-500 hover:bg-indigo-400 disabled:opacity-50 text-white text-sm font-bold rounded-xl transition"
-                  >
-                    {inviting ? "Sending…" : "Invite"}
-                  </button>
-                </div>
-              </div>
-            )}
-          </>
-        ) : null}
-
-        {/* Role descriptions */}
-        <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-4">
-          {[
-            { color: "text-indigo-400",  label: "Owner",  desc: "Full access. Can delete or transfer the team." },
-            { color: "text-purple-400",  label: "Admin",  desc: "Manage members and invite links. Cannot delete the team." },
-            { color: "text-emerald-400", label: "Member", desc: "Manage links and view analytics. Cannot change team settings." },
-            { color: "text-slate-400",   label: "Viewer", desc: "Read-only access to dashboard and analytics." },
-          ].map(({ color, label, desc }) => (
-            <div key={label} className="p-5 rounded-2xl bg-surface border border-border">
-              <p className={`${color} font-black text-xs uppercase mb-2`}>{label}</p>
-              <p className="text-sm text-subtle">{desc}</p>
-            </div>
-          ))}
         </div>
       )}
     </div>

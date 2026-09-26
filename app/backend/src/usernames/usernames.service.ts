@@ -6,6 +6,7 @@ import {
   TrendingCreatorResult,
   FeaturedProfileResult,
   MarketplaceListing,
+  EditableProfileRecord,
 } from "../supabase/supabase.service";
 import { decodeCursor } from "../common/pagination/cursor.util";
 import { SupabaseUniqueConstraintError } from "../supabase/supabase.errors";
@@ -24,6 +25,7 @@ import {
   UsernameErrorCode,
   UsernameClaimInvalidError,
 } from "./errors";
+import { ProfileSettingsDto } from "../dto/username/profile-settings.dto";
 
 const CLAIM_TOLERANCE_MS = 5 * 60 * 1000;
 const CLAIM_PREFIX = "QuickEx username claim";
@@ -158,6 +160,31 @@ export class UsernamesService {
     return this.supabase.listUsernamesByPublicKey(publicKey) as Promise<
       UsernameRow[]
     >;
+  }
+
+  async getProfileSettings(publicKey: string): Promise<EditableProfileRecord[]> {
+    return this.supabase.getProfileSettings(publicKey);
+  }
+
+  async updateProfileSettings(
+    dto: ProfileSettingsDto,
+  ): Promise<
+    | { status: "updated"; profile: EditableProfileRecord }
+    | { status: "conflict" | "not_found" }
+  > {
+    return this.supabase.updateProfileSettings(
+      dto.publicKey,
+      this.normalizeUsername(dto.username),
+      dto.profileVersion,
+      {
+        profile_primary_color: dto.primaryColor,
+        avatar_url: dto.avatarUrl?.trim() || null,
+        bio: dto.bio,
+        twitter_handle: dto.twitterHandle,
+        discord_handle: dto.discordHandle,
+        github_handle: dto.githubHandle,
+      },
+    );
   }
 
   async searchDiscovery(

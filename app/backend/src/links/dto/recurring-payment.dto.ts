@@ -21,6 +21,7 @@ export enum RecurringStatus {
 
 export enum ExecutionStatus {
   PENDING = 'pending',
+  PROCESSING = 'processing',
   SUCCESS = 'success',
   FAILED = 'failed',
   SKIPPED = 'skipped',
@@ -74,6 +75,14 @@ export class CreateRecurringPaymentLinkDto {
   @IsString()
   @IsOptional()
   destination?: string;
+
+  @ApiPropertyOptional({
+    description: 'Payer public key used for opted-in recurring payment notifications',
+    example: 'G...56 characters',
+  })
+  @IsString()
+  @IsOptional()
+  payerPublicKey?: string;
 
   @ApiProperty({
     description: 'Payment frequency',
@@ -253,6 +262,9 @@ export class RecurringPaymentLinkResponseDto {
 
   @ApiPropertyOptional({ description: 'Destination public key' })
   destination?: string;
+
+  @ApiPropertyOptional({ description: 'Payer public key for notification delivery' })
+  payerPublicKey?: string;
 
   @ApiProperty({ description: 'Payment amount' })
   amount!: number;

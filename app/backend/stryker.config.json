@@ -1,0 +1,27 @@
+{
+  "$schema": "https://raw.githubusercontent.com/stryker-mutator/stryker-js/master/packages/api/schema/stryker-core.json",
+  "packageManager": "pnpm",
+  "reporters": ["html", "clear-text", "progress", "json"],
+  "testRunner": "jest",
+  "coverageAnalysis": "perTest",
+  "jest": {
+    "projectType": "custom",
+    "configFile": "jest.unit.config.ts"
+  },
+  "mutate": [
+    "src/auth/guards/api-key.guard.ts",
+    "src/auth/guards/organization-role.guard.ts",
+    "src/contracts/contract-method-allowlist.guard.ts",
+    "src/contracts/contract-allowlist.service.ts",
+    "src/feature-flags/network-safety.guard.ts",
+    "src/transactions/transaction.service.ts"
+  ],
+  "thresholds": {
+    "high": 90,
+    "low": 80,
+    "break": 75
+  },
+  "timeoutMS": 15000,
+  "tempDirName": ".stryker-tmp",
+  "cleanTempDir": true
+}

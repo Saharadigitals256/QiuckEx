@@ -23,7 +23,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     setIsFetching(true);
     setError(null);
     try {
-      const response = await fetchSessionBootstrap(current.apiUrl);
+      const response = await fetchSessionBootstrap(current.apiUrl, {
+        allowDegraded: true,
+        currentEnvironmentId: current.id,
+      });
       setData(response);
       processMetadata(response.metadata);
     } catch (err) {

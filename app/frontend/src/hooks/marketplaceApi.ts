@@ -181,6 +181,7 @@ export type BackendMarketplaceBid = {
 
 export type MarketplaceStateHints = {
   can_place_bid: boolean;
+  can_accept_bids?: boolean;
   can_watchlist: boolean;
   can_buy_now: boolean;
   is_available: boolean;

@@ -10,6 +10,7 @@ import {
   MarketplaceListingDetail,
   acceptBid,
 } from "@/hooks/marketplaceApi";
+import { resolvePublicKey } from "@/lib/publicKey";
 import { useFocusTrap } from "@/hooks/useFocusTrap";
 
 type ListingDetailModalProps = {
@@ -47,6 +48,8 @@ export function ListingDetailModal({
   onPlaceBid,
 }: ListingDetailModalProps) {
   const [loadState, setLoadState] = useState<DetailLoadState>({ kind: "idle" });
+  const [actionState, setActionState] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const modalRef = useFocusTrap<HTMLDivElement>(Boolean(listingId), onClose);
 
   useEffect(() => {

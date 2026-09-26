@@ -1,4 +1,5 @@
 import type { ActivityFeedItem } from '@/hooks/activityFeedApi';
+export type { ActivityFeedItem };
 
 export type ActivityFilterStatus = 'All' | ActivityFeedItem['status'];
 

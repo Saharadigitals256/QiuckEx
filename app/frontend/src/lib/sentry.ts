@@ -4,6 +4,8 @@
  * logging so error reporting never throws if Sentry isn't set up yet.
  */
 
+import { sanitizeTelemetryContext, sanitizeTelemetryError } from "@/lib/errorReporter";
+
 export interface CaptureContext {
   componentStack?: string | null;
   url?: string;
@@ -16,26 +18,30 @@ export interface CaptureContext {
 }
 
 export function captureException(error: unknown, context: CaptureContext = {}): void {
-  const payload = {
-    url: context.url ?? (typeof window !== "undefined" ? window.location.href : undefined),
+  const safeError = sanitizeTelemetryError(error);
+  const safeContext = sanitizeTelemetryContext({
+    route: context.url,
     componentStack: context.componentStack ?? undefined,
-    user: context.user ?? undefined,
-    extra: context.extra ?? undefined,
+    extra: context.extra,
+  });
+  const payload = {
+    route: safeContext.route,
+    componentStack: safeContext.componentStack,
+    extra: safeContext.extra,
   };
 
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const Sentry = require("@sentry/nextjs");
     Sentry.withScope((scope: any) => {
-      if (payload.user) scope.setUser(payload.user);
-      if (payload.url) scope.setTag("url", payload.url);
+      if (payload.route) scope.setTag("route", payload.route);
       if (payload.componentStack) scope.setExtra("componentStack", payload.componentStack);
       if (payload.extra) {
         Object.entries(payload.extra).forEach(([key, value]) => scope.setExtra(key, value));
       }
-      Sentry.captureException(error);
+      Sentry.captureException(safeError);
     });
   } catch {
-    console.error("[sentry:captureException]", error, payload);
+    console.error("[sentry:captureException]", safeError, payload);
   }
 }

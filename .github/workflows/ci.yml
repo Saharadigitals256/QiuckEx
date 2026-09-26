@@ -3,16 +3,30 @@ name: CI Pipeline
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
 
 jobs:
   validate:
+    name: Validate (${{ matrix.package }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - "@quickex/backend"
+          - "frontend"
+          - "mobile"
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
+        with:
+          run_install: false
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -20,15 +34,53 @@ jobs:
           node-version: "20"
           cache: "pnpm"
 
+      - name: Cache Turbo build cache
+        uses: actions/cache@v4
+        with:
+          path: .turbo/cache
+          key: ${{ runner.os }}-turbo-${{ matrix.package }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-turbo-${{ matrix.package }}-
+            ${{ runner.os }}-turbo-
+
       # Forces pnpm to link all internal binaries across packages properly
       - name: Install Dependencies
         run: pnpm install --no-frozen-lockfile
 
-      # Task 1: Runs your pipeline checks consistently using Turbo
-      - name: Build and validate workspace change
+      # Affected-package execution with Turbo caching
+      - name: Run CI tasks for ${{ matrix.package }}
         run: |
-          cd app/backend
-          npx tsc --noEmit || echo "::warning::Bypassing existing codebase compilation warning cleanly."
+          BASE_REF="${{ github.base_ref || 'main' }}"
+          git fetch origin "$BASE_REF" --depth=1 2>/dev/null || true
+
+          echo "Evaluating affected execution for ${{ matrix.package }} against origin/$BASE_REF"
+          pnpm turbo run lint type-check test build \
+            --filter="${{ matrix.package }}...[origin/$BASE_REF]" \
+            --cache-dir=".turbo/cache" || \
+          pnpm turbo run lint type-check test build \
+            --filter="${{ matrix.package }}..." \
+            --cache-dir=".turbo/cache"
+
+  # ── Governance gate (issues #306-#309) ────────────────────────────────────
+  # Dependency-free: validates ADRs, asset listing policy, retention schedule and
+  # the a11y/i18n standard before anything is installed.
+  governance:
+    name: Governance Gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run governance gate
+        run: node scripts/governance/check.mjs
+
+      - name: Test the governance gate
+        run: node --test scripts/governance/__tests__/governance.test.mjs
 
   # ── Secret scanning (lightweight check in main CI) ──────────────────────
   secret-scan:
@@ -51,13 +103,12 @@ jobs:
           if [ -f .secrets.baseline ]; then
             detect-secrets scan \
               --baseline .secrets.baseline \
-              --exclude-files '(pnpm-lock\.yaml|package-lock\.json|.*\.lock|node_modules/.*|dist/.*|coverage/.*)' \
+              --exclude-files '(pnpm-lock\.yaml|package-lock\.json|.*\.lock|node_modules/.*|dist/.*|coverage/.*|.turbo/.*)' \
               .
           else
             echo "::warning::No .secrets.baseline found. Run './scripts/secret-scan.sh' locally to generate one."
-            # Fresh scan – fail if any secrets detected
             detect-secrets scan \
-              --exclude-files '(pnpm-lock\.yaml|package-lock\.json|.*\.lock|node_modules/.*|dist/.*|coverage/.*)' \
+              --exclude-files '(pnpm-lock\.yaml|package-lock\.json|.*\.lock|node_modules/.*|dist/.*|coverage/.*|.turbo/.*)' \
               . > /tmp/secrets-check.json
             python3 -c "
           import json, sys
@@ -78,3 +129,30 @@ jobs:
             exit 1
           fi
           echo "No .env files in changes. ✓"
+
+  # ── Release Quality Scorecard Generation & Publishing ───────────────────
+  scorecard:
+    name: Release Quality Scorecard
+    runs-on: ubuntu-latest
+    needs: [validate, secret-scan]
+    if: always()
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Generate Release Scorecard
+        run: |
+          node scripts/generate-release-scorecard.mjs --summary --output release-scorecard.md --json release-scorecard.json
+
+      - name: Upload Release Scorecard Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-quality-scorecard
+          path: |
+            release-scorecard.md
+            release-scorecard.json

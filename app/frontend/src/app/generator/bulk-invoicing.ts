@@ -245,6 +245,15 @@ export function validateBulkCsvDraftRow(row: BulkCsvDraftRow): BulkCsvDraftRow {
 
   if (!nextRow.amount || Number.isNaN(parsedAmount) || parsedAmount <= 0) {
     nextRow.errors.push('Enter a valid positive amount.');
+  } else {
+    const amountParts = nextRow.amount.split('.');
+    if (amountParts[1] && amountParts[1].length > 7) {
+      nextRow.errors.push('Amount exceeds maximum precision of 7 decimal places.');
+    }
+  }
+
+  if (nextRow.memo && new TextEncoder().encode(nextRow.memo).length > 28) {
+    nextRow.errors.push('Memo exceeds maximum Stellar limit of 28 bytes.');
   }
 
   if (!ASSET_CODE_PATTERN.test(nextRow.asset)) {

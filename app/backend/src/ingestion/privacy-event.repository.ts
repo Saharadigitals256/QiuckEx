@@ -8,8 +8,8 @@ export class PrivacyEventRepository {
 
   constructor(private readonly supabase: SupabaseService) {}
 
-  async upsertEvent(event: PrivacyToggledEvent): Promise<void> {
-    const { error } = await this.supabase.getClient()
+  async upsertEvent(event: PrivacyToggledEvent): Promise<boolean> {
+    const { data, error } = await this.supabase.getClient()
       .from("privacy_events")
       .upsert(
         {
@@ -24,11 +24,13 @@ export class PrivacyEventRepository {
           paging_token: event.pagingToken,
         },
         { onConflict: "tx_hash,event_type,owner", ignoreDuplicates: true },
-      );
+      )
+      .select("id");
 
     if (error) {
       this.logger.error(`Failed to upsert PrivacyToggled for owner ${event.owner}: ${error.message}`);
       throw error;
     }
+    return Boolean(data?.length);
   }
 }

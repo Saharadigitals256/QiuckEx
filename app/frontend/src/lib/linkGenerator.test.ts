@@ -5,11 +5,15 @@ import {
   readDraftLinks,
   saveDraftLink,
   validateAmountInput,
+  validateAssetCode,
+  validateMemoInput,
+  validatePaymentLinkPreview,
 } from './linkGenerator';
 
 describe('validateAmountInput', () => {
   it('accepts positive numbers', () => {
     expect(validateAmountInput('12.5')).toEqual({ valid: true });
+    expect(validateAmountInput('0.0000001')).toEqual({ valid: true });
   });
 
   it('rejects empty, zero and invalid values', () => {
@@ -25,6 +29,112 @@ describe('validateAmountInput', () => {
       valid: false,
       message: 'Enter a valid number.',
     });
+  });
+
+  it('rejects amounts exceeding 7 decimal places (Stellar stroop precision)', () => {
+    const res = validateAmountInput('1.12345678');
+    expect(res.valid).toBe(false);
+    expect(res.message).toContain('7 decimal places');
+  });
+
+  it('rejects amounts exceeding Stellar max limits', () => {
+    const res = validateAmountInput('9999999999999999999');
+    expect(res.valid).toBe(false);
+    expect(res.message).toContain('maximum');
+  });
+});
+
+describe('validateMemoInput', () => {
+  it('accepts empty memo', () => {
+    expect(validateMemoInput('')).toEqual({ valid: true, byteLength: 0 });
+  });
+
+  it('accepts memos within 28 bytes', () => {
+    const res = validateMemoInput('Order-12345');
+    expect(res.valid).toBe(true);
+    expect(res.byteLength).toBe(11);
+  });
+
+  it('rejects memos exceeding 28 bytes', () => {
+    const longMemo = 'This is a memo that is definitely longer than 28 bytes';
+    const res = validateMemoInput(longMemo);
+    expect(res.valid).toBe(false);
+    expect(res.message).toContain('exceeds maximum limit of 28 bytes');
+  });
+
+  it('accurately counts multi-byte UTF-8 characters', () => {
+    // 🚀 is 4 bytes
+    const emojiMemo = '🚀🚀🚀🚀🚀🚀🚀🚀'; // 8 emojis * 4 bytes = 32 bytes
+    const res = validateMemoInput(emojiMemo);
+    expect(res.valid).toBe(false);
+    expect(res.byteLength).toBe(32);
+  });
+});
+
+describe('validateAssetCode', () => {
+  it('accepts valid asset codes', () => {
+    expect(validateAssetCode('XLM')).toEqual({ valid: true, normalized: 'XLM' });
+    expect(validateAssetCode('usdc')).toEqual({ valid: true, normalized: 'USDC' });
+    expect(validateAssetCode('EURC123')).toEqual({ valid: true, normalized: 'EURC123' });
+  });
+
+  it('rejects invalid asset codes', () => {
+    expect(validateAssetCode('')).toEqual({
+      valid: false,
+      message: 'Asset code is required.',
+    });
+    expect(validateAssetCode('TOOLONGASSETCODE123')).toEqual({
+      valid: false,
+      message: 'Asset code must be 1-12 uppercase alphanumeric characters.',
+    });
+    expect(validateAssetCode('BAD-CODE')).toEqual({
+      valid: false,
+      message: 'Asset code must be 1-12 uppercase alphanumeric characters.',
+    });
+  });
+});
+
+describe('validatePaymentLinkPreview', () => {
+  it('validates a complete valid payment link preview', () => {
+    const res = validatePaymentLinkPreview({
+      amount: '25.50',
+      asset: 'USDC',
+      memo: 'Invoice 101',
+      username: 'alice',
+    });
+    expect(res.valid).toBe(true);
+    expect(res.errors).toEqual({});
+  });
+
+  it('validates valid destination G-address', () => {
+    const res = validatePaymentLinkPreview({
+      amount: '10',
+      asset: 'XLM',
+      destination: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+    });
+    expect(res.valid).toBe(true);
+  });
+
+  it('rejects missing recipient', () => {
+    const res = validatePaymentLinkPreview({
+      amount: '10',
+      asset: 'XLM',
+    });
+    expect(res.valid).toBe(false);
+    expect(res.errors.recipient).toBeDefined();
+  });
+
+  it('collects multiple validation errors across amount, asset, and memo', () => {
+    const res = validatePaymentLinkPreview({
+      amount: '-5',
+      asset: 'INVALID_ASSET_TOOLONG',
+      memo: 'This memo is excessively long and will fail Stellar 28 byte limit',
+      username: 'bob',
+    });
+    expect(res.valid).toBe(false);
+    expect(res.errors.amount).toBeDefined();
+    expect(res.errors.asset).toBeDefined();
+    expect(res.errors.memo).toBeDefined();
   });
 });
 
@@ -49,18 +159,18 @@ describe('getVerifiedAssetOptions', () => {
 
 describe('draft storage', () => {
   it('saves and reads draft links in order', () => {
+    const data = new Map<string, string>();
     const storage = {
-      data: new Map<string, string>(),
       getItem(key: string) {
-        return this.data.get(key) ?? null;
+        return data.get(key) ?? null;
       },
       setItem(key: string, value: string) {
-        this.data.set(key, value);
+        data.set(key, value);
       },
       removeItem(key: string) {
-        this.data.delete(key);
+        data.delete(key);
       },
-    } as Storage;
+    } as unknown as Storage;
 
     const draft = {
       id: 'draft-1',

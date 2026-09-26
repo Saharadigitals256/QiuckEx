@@ -1,0 +1,31 @@
+# Maestro accessibility automation for core payment and wallet screens (#272)
+appId: com.pulsefy.quickex
+
+---
+- launchApp
+
+# 1. Verify Wallet Connect Accessibility
+- tapOn: "Wallet"
+- assertVisible: "Connect Wallet"
+
+# Assert accessibility labels on wallet options
+- assertVisible: "Albedo"
+- tapOn:
+    id: "wallet-option-albedo"
+- assertVisible:
+    id: "connect-wallet-button"
+
+# 2. Verify Quick Receive Accessibility
+- tapOn: "Receive"
+- assertVisible: "Quick Receive"
+- assertVisible: "Connect wallet"
+
+# 3. Verify Payment Confirmation Accessibility
+- openLink: "quickex://alice?amount=25.00&asset=USDC"
+- assertVisible: "Confirm Payment"
+- assertVisible:
+    id: "pay-with-wallet-button"
+- assertVisible:
+    id: "cancel-payment-button"
+- tapOn:
+    id: "cancel-payment-button"

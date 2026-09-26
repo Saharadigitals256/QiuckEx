@@ -10,7 +10,9 @@ import {
   BadRequestException,
   ForbiddenException,
   ConflictException,
+  TooManyRequestsException,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import {
   ApiBody,
   ApiOperation,
@@ -30,6 +32,7 @@ export class MarketplaceController {
   constructor(private readonly marketplaceService: MarketplaceService) {}
 
   @Post('list')
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   @ApiOperation({ summary: 'List a username for sale' })
   @ApiBody({ type: ListUsernameDto })
   @ApiResponse({ status: 201, description: 'Listing created' })
@@ -119,12 +122,14 @@ export class MarketplaceController {
   }
 
   @Delete(':listingId')
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   @ApiOperation({ summary: 'Cancel a listing' })
   @ApiParam({ name: 'listingId', description: 'Listing UUID' })
   @ApiBody({ type: CancelListingDto })
   @ApiResponse({ status: 200, description: 'Listing cancelled' })
   @ApiResponse({ status: 403, description: 'Not the seller' })
   @ApiResponse({ status: 404, description: 'Listing not found' })
+  @ApiResponse({ status: 429, description: 'Marketplace action limit exceeded' })
   async cancelListing(
     @Param('listingId') listingId: string,
     @Body() body: CancelListingDto,
@@ -141,12 +146,14 @@ export class MarketplaceController {
   }
 
   @Post(':listingId/bid')
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   @ApiOperation({ summary: 'Place a bid on a listing' })
   @ApiParam({ name: 'listingId', description: 'Listing UUID' })
   @ApiBody({ type: PlaceBidDto })
   @ApiResponse({ status: 201, description: 'Bid placed' })
   @ApiResponse({ status: 400, description: 'Seller cannot bid on own listing' })
   @ApiResponse({ status: 404, description: 'Listing not found' })
+  @ApiResponse({ status: 429, description: 'Marketplace action limit exceeded' })
   async placeBid(
     @Param('listingId') listingId: string,
     @Body() body: PlaceBidDto,
@@ -196,6 +203,7 @@ export class MarketplaceController {
   }
 
   @Post(':listingId/accept-bid/:bidId')
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   @ApiOperation({ summary: 'Accept a bid — atomically transfers username ownership' })
   @ApiParam({ name: 'listingId', description: 'Listing UUID' })
   @ApiParam({ name: 'bidId', description: 'Bid UUID' })
@@ -230,6 +238,11 @@ export class MarketplaceController {
         throw new ForbiddenException({ code: err.code, message: err.message });
       case MarketplaceErrorCode.ALREADY_LISTED:
         throw new ConflictException({ code: err.code, message: err.message });
+      case MarketplaceErrorCode.LISTING_LIMIT_REACHED:
+      case MarketplaceErrorCode.BID_LIMIT_REACHED:
+        throw new TooManyRequestsException({ code: err.code, message: err.message });
+      case MarketplaceErrorCode.COMPLIANCE_RESTRICTED:
+        throw new ForbiddenException({ code: err.code, message: err.message });
       default:
         throw new BadRequestException({ code: err.code, message: err.message });
     }

@@ -29,8 +29,24 @@ For the cross-app (backend/frontend/mobile/contracts) release gate, see the root
 - [ ] Data transmitted over the network is encrypted and sent only to approved endpoints
 - [ ] User transaction history is treated as private and not shared with third parties without consent
 
+## Security & Deep Linking
+- [ ] Confirm deep-link route resolution rejects homoglyphs, open-redirects, and expired links
+- [ ] Confirm one-time nonces cannot be replayed across sessions
+- [ ] Confirm native receipt verification passes against backend `/v1/receipts/*` with degraded offline fallback
+
+## Accessibility (A11y)
+- [ ] Confirm all payment and wallet action buttons declare `accessibilityRole="button"`, `accessibilityLabel`, and `accessibilityHint`
+- [ ] Run automated accessibility suite (`__tests__/accessibility-automation.test.tsx` and Maestro `core-accessibility.yml`)
+
+## Environment & Network Parity
+- [ ] Confirm iOS `bundleIdentifier` and Android `package` match for each profile
+- [ ] Confirm production release builds target `mainnet` and `https://api.quickex.to`
+- [ ] Confirm staging/dev release builds never use production secrets or mainnet contracts
+- [ ] Run release parity test suite (`__tests__/release-build-parity.test.ts`)
+
 ## QA Verification
 - [ ] Install internal build on Android and verify the correct environment shows in-app
 - [ ] Install internal build on iOS and verify the correct environment and network display
 - [ ] Verify the release tag or build metadata is visible if present
 - [ ] Confirm the app behaves normally in the selected network environment
+

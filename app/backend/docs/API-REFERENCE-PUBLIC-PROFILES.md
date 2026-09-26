@@ -169,185 +169,379 @@ curl -X POST "http://localhost:3000/username/toggle-public" \
 
 ---
 
-## Field Descriptions
+### 4. Rename Username (with redirect preservation)
 
-### PublicProfile Object
+**POST** `/username/rename`
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | UUID | Unique identifier |
-| `username` | string | Normalized username (lowercase) |
-| `publicKey` | string | Stellar public key (G...) |
-| `similarityScore` | number | Search relevance (0-100), only in search results |
-| `transactionVolume` | number | Total USD volume, only in trending results |
-| `transactionCount` | number | Number of transactions, only in trending results |
-| `lastActiveAt` | ISO 8601 datetime | Last activity timestamp |
-| `createdAt` | ISO 8601 datetime | Registration timestamp |
+Rename a username while preserving existing payment links. The previous
+username is retained as a permanent redirect alias so that any payment link
+or QR code that already references the old username continues to resolve to
+the same Stellar public key. Self-custody is preserved: the rename only
+affects the username-to-publicKey mapping, never the key itself.
 
----
+#### Request Body
 
-## Usage Notes
-
-### Search Tips
-- Minimum 2 characters required
-- Case-insensitive (automatically normalized)
-- Supports partial matches and typos
-- Results ranked by similarity score
-- Only includes profiles with `is_public=true`
-
-### Trending Algorithm
-- Based on actual payment transaction volume
-- Counts both sender and receiver activity
-- Volume measured in USD
-- Only public profiles appear in results
-- Real-time calculation (no caching)
-
-### Privacy Controls
-- Profiles are **private by default** (opt-in)
-- Only wallet owners can toggle visibility
-- Changes take effect immediately
-- Hidden profiles won't appear in search or trending
-
----
-
-## Rate Limits
-
-All endpoints are subject to rate limiting:
-- Default: 10 requests/minute
-- With API key: Higher limits apply
-- Exceeding limits returns `429 Too Many Requests`
-
----
-
-## Error Responses
-
-### 400 Bad Request
 ```json
 {
-  "code": "USERNAME_INVALID_FORMAT",
-  "message": "Search query must be at least 2 characters",
-  "field": "query"
+  "currentUsername": "alice",
+  "newUsername": "alice-co",
+  "publicKey": "GBXGQ55JMQ4L2B6E7S8Y9Z0A1B2C3D4E5F6G7H8I7YWR",
+  "idempotencyKey": "3f9c1e2a-7b4d-4c8e-9f01-2a3b4c5d6e7f"
 }
 ```
 
-### 404 Not Found
-```json
-{
-  "code": "USERNAME_NOT_FOUND",
-  "message": "Username not found or does not belong to this wallet"
-}
-```
+#### Parameters
 
-### 429 Too Many Requests
-```json
-{
-  "statusCode": 429,
-  "error": "Too Many Requests",
-  "message": "Rate limit exceeded"
-}
-```
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `currentUsername` | string | ✅ Yes | Username being renamed (normalized, lowercase) |
+| `newUsername` | string | ✅ Yes | Desired new username (normalized, lowercase) |
+| `publicKey` | string | ✅ Yes | Owner's Stellar public key (must match current owner) |
+| `idempotencyKey` | string (UUID) | ✅ Yes | Client-generated key; replays return the original result |
 
----
-
-## Swagger Documentation
-
-Interactive API documentation available at:
-```
-http://localhost:3000/api#/usernames
-```
-
-Features:
-- Try it out directly in browser
-- See all request/response schemas
-- Download OpenAPI spec
-
----
-
-## Code Examples
-
-### JavaScript/Node.js
-
-```javascript
-// Search for profiles
-async function searchProfiles(query, limit = 10) {
-  const response = await fetch(
-    `http://localhost:3000/username/search?query=${query}&limit=${limit}`
-  );
-  return await response.json();
-}
-
-// Get trending creators
-async function getTrendingCreators(timeWindowHours = 24, limit = 10) {
-  const response = await fetch(
-    `http://localhost:3000/username/trending?timeWindowHours=${timeWindowHours}&limit=${limit}`
-  );
-  return await response.json();
-}
-
-// Toggle public profile
-async function togglePublicProfile(username, publicKey, isPublic) {
-  const response = await fetch(
-    'http://localhost:3000/username/toggle-public',
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, publicKey, isPublic }),
-    }
-  );
-  return await response.json();
-}
-```
-
-### Python
-
-```python
-import requests
-
-BASE_URL = "http://localhost:3000"
-
-def search_profiles(query, limit=10):
-    response = requests.get(
-        f"{BASE_URL}/username/search",
-        params={"query": query, "limit": limit}
-    )
-    return response.json()
-
-def get_trending_creators(time_window_hours=24, limit=10):
-    response = requests.get(
-        f"{BASE_URL}/username/trending",
-        params={"timeWindowHours": time_window_hours, "limit": limit}
-    )
-    return response.json()
-
-def toggle_public_profile(username, public_key, is_public):
-    response = requests.post(
-        f"{BASE_URL}/username/toggle-public",
-        json={"username": username, "publicKey": public_key, "isPublic": is_public}
-    )
-    return response.json()
-```
-
-### cURL Examples
+#### Example Request
 
 ```bash
-# Search
-curl "http://localhost:3000/username/search?query=alice&limit=5"
-
-# Trending (last 7 days)
-curl "http://localhost:3000/username/trending?timeWindowHours=168&limit=20"
-
-# Enable public profile
-curl -X POST "http://localhost:3000/username/toggle-public" \
+curl -X POST "http://localhost:3000/username/rename" \
   -H "Content-Type: application/json" \
-  -d '{"username":"alice","publicKey":"GBXG...","isPublic":true}'
-
-# Disable public profile
-curl -X POST "http://localhost:3000/username/toggle-public" \
-  -H "Content-Type: application/json" \
-  -d '{"username":"alice","publicKey":"GBXG...","isPublic":false}'
+  -d '{
+    "currentUsername": "alice",
+    "newUsername": "alice-co",
+    "publicKey": "GBXGQ55JMQ4L2B6E7S8Y9Z0A1B2C3D4E5F6G7H8I7YWR",
+    "idempotencyKey": "3f9c1e2a-7b4d-4c8e-9f01-2a3b4c5d6e7f"
+  }'
 ```
+
+#### Example Response (Success)
+
+```json
+{
+  "ok": true,
+  "username": "alice-co",
+  "redirectFrom": "alice",
+  "publicKey": "GBXGQ55JMQ4L2B6E7S8Y9Z0A1B2C3D4E5F6G7H8I7YWR",
+  "renamedAt": "2025-03-27T12:05:00Z"
+}
+```
+
+#### Status Codes
+
+- `200 OK` - Rename applied (or idempotent replay of a prior success)
+- `400 Bad Request` - Malformed username or missing idempotency key
+- `401 Unauthorized` - Missing or invalid signature over the rename payload
+- `403 Forbidden` - `publicKey` does not own `currentUsername`
+- `404 Not Found` - `currentUsername` does not exist
+- `409 Conflict` - `newUsername` already taken, or `currentUsername` is a reserved redirect alias
+- `410 Gone` - Redirect alias expired (only when a non-permanent alias policy is configured)
+- `503 Service Unavailable` - Dependency (DB/registry) unavailable; safe to retry with the same idempotency key
+
+#### Redirect Semantics
+
+- The old username becomes a **permanent redirect alias** to the new username.
+- Payment links, QR codes, and share URLs that embed the old username keep
+  resolving to the same `publicKey`; no funds are ever routed to a new key.
+- Redirects are resolved server-side before any payment intent is created, so
+  the financial invariant "username → publicKey is stable for the lifetime of
+  a payment link" is preserved.
+- A username that is currently a redirect alias cannot be re-registered by a
+  different wallet (`409 Conflict`).
+
+#### Idempotency & Rollback
+
+- Every rename requires an `idempotencyKey`. Replaying the same key returns
+  the original `200 OK` response without re-applying the change.
+- Renames are applied atomically: the new mapping and the redirect alias are
+  written in a single transaction. On dependency failure the transaction is
+  rolled back and the old username remains fully active.
+- If the new username write succeeds but the alias write fails, the whole
+  transaction is rolled back — there is never a window where the old link
+  stops resolving.
+
+#### Observability
+
+- Structured log fields: `event=username.rename`, `currentUsername`,
+  `newUsername`, `publicKey` (hashed), `idempotencyKey`, `outcome`,
+  `latencyMs`. No secrets or raw keys are logged.
+- Metrics: `username_rename_total{outcome}`, `username_rename_latency_ms`,
+  `username_redirect_resolve_total{hit|miss}`.
 
 ---
 
-**Last Updated:** March 27, 2025  
-**Version:** 1.0.0
+### 5. Report a Public Profile (Abuse Reporting)
+
+**POST** `/username/report`
+
+Submit an abuse report against a public profile. Reports are accepted only
+from authenticated reporters and are recorded for moderator review. Reporting
+never mutates the target profile or its `username → publicKey` mapping, so
+self-custody and the financial invariants are preserved.
+
+#### Request Body
+
+```json
+{
+  "username": "alice",
+  "category": "impersonation",
+  "details": "Profile is impersonating a known creator.",
+  "idempotencyKey": "9b1c2d3e-4f5a-6b7c-8d9e-0f1a2b3c4d5e"
+}
+```
+
+#### Parameters
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `username` | string | ✅ Yes | Reported profile username (normalized, lowercase) |
+| `category` | string | ✅ Yes | One of `impersonation`, `spam`, `fraud`, `harassment`, `other` |
+| `details` | string | ❌ No | Free-text context (max 2000 chars) |
+| `idempotencyKey` | string (UUID) | ✅ Yes | Client-generated key; replays return the original result |
+
+#### Example Request
+
+```bash
+curl -X POST "http://localhost:3000/username/report" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <reporter-token>" \
+  -d '{
+    "username": "alice",
+    "category": "impersonation",
+    "details": "Profile is impersonating a known creator.",
+    "idempotencyKey": "9b1c2d3e-4f5a-6b7c-8d9e-0f1a2b3c4d5e"
+  }'
+```
+
+#### Example Response (Success)
+
+```json
+{
+  "ok": true,
+  "reportId": "c1a2b3d4-e5f6-7890-abcd-ef1234567890",
+  "status": "received",
+  "reportedAt": "2025-03-27T12:10:00Z"
+}
+```
+
+#### Status Codes
+
+- `200 OK` - Report recorded (or idempotent replay of a prior submission)
+- `400 Bad Request` - Malformed username, unknown category, or missing idempotency key
+- `401 Unauthorized` - Missing or invalid reporter authentication
+- `404 Not Found` - Reported username does not exist
+- `409 Conflict` - Duplicate report for the same `(reporter, username, category)` within the dedupe window
+- `429 Too Many Requests` - Reporter exceeded the abuse-report rate limit
+- `503 Service Unavailable` - Dependency (DB/moderation queue) unavailable; safe to retry with the same idempotency key
+
+#### Idempotency & Rollback
+
+- Every report requires an `idempotencyKey`. Replaying the same key returns
+  the original `200 OK` response without creating a second report.
+- Reports are append-only and never mutate the target profile, so there is no
+  rollback path that could affect the `username → publicKey` mapping.
+- On dependency failure the report is not persisted and the caller may safely
+  retry with the same idempotency key.
+
+#### Observability
+
+- Structured log fields: `event=username.report`, `username`, `category`,
+  `reporterId` (hashed), `idempotencyKey`, `outcome`, `latencyMs`. No secrets
+  or raw reporter identifiers are logged.
+- Metrics: `username_report_total{outcome}`, `username_report_latency_ms`,
+  `username_report_dedupe_total{hit|miss}`.
+
+---
+
+### 6. Get Verified Profile Metadata
+
+**GET** `/username/:username/metadata`
+
+Return the verified profile metadata for a public profile. Metadata is
+attached to the `username → publicKey` mapping and is served from a cache
+that is invalidated on every write. Self-custody is preserved: metadata is
+advisory display data and never influences payment routing.
+
+#### Parameters
+
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| `username` | string | ✅ Yes | - | Profile username (normalized, lowercase) |
+
+#### Example Request
+
+```bash
+curl "http://localhost:3000/username/alice/metadata"
+```
+
+#### Example Response
+
+```json
+{
+  "username": "alice",
+  "publicKey": "GBXGQ55JMQ4L2B6E7S8Y9Z0A1B2C3D4E5F6G7H8I7YWR",
+  "verified": true,
+  "verifiedAt": "2025-03-20T09:00:00Z",
+  "displayName": "Alice",
+  "avatarUrl": "https://cdn.quickex.example/avatars/alice.png",
+  "bio": "Stellar payments educator.",
+  "links": [
+    { "label": "website", "url": "https://alice.example" }
+  ],
+  "version": 4,
+  "updatedAt": "2025-03-27T12:00:00Z"
+}
+```
+
+#### Status Codes
+
+- `200 OK` - Metadata returned (cache hit or miss)
+- `400 Bad Request` - Malformed username
+- `404 Not Found` - Username does not exist
+- `503 Service Unavailable` - Metadata store unavailable and no cached copy is servable
+
+#### Cache Semantics
+
+- Metadata reads are served from a per-username cache keyed by
+  `profile:metadata:<username>`.
+- Every successful metadata write bumps `version` and invalidates the cache
+  entry for that username before returning, so a subsequent read observes the
+  new value (read-after-write consistency).
+- Cache entries carry a short TTL as a safety net; a stale entry is never
+  served after a successful write because invalidation is synchronous.
+- On cache-store failure the read falls back to the source of truth; the
+  response is still correct, only slower.
+
+---
+
+### 7. Update Verified Profile Metadata
+
+**PUT** `/username/:username/metadata`
+
+Create or replace the verified profile metadata for a username. Only the
+wallet that owns the `username → publicKey` mapping may write metadata.
+Writes are idempotent, validated, and invalidate the metadata cache.
+
+#### Request Body
+
+```json
+{
+  "publicKey": "GBXGQ55JMQ4L2B6E7S8Y9Z0A1B2C3D4E5F6G7H8I7YWR",
+  "displayName": "Alice",
+  "avatarUrl": "https://cdn.quickex.example/avatars/alice.png",
+  "bio": "Stellar payments educator.",
+  "links": [
+    { "label": "website", "url": "https://alice.example" }
+  ],
+  "expectedVersion": 3,
+  "idempotencyKey": "7d2e3f4a-5b6c-7d8e-9f0a-1b2c3d4e5f60"
+}
+```
+
+#### Parameters
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `publicKey` | string | ✅ Yes | Owner's Stellar public key (must match current owner) |
+| `displayName` | string | ❌ No | Display name (max 64 chars) |
+| `avatarUrl` | string | ❌ No | HTTPS URL to avatar image |
+| `bio` | string | ❌ No | Short bio (max 280 chars) |
+| `links` | array | ❌ No | Up to 5 `{ label, url }` entries; URLs must be HTTPS |
+| `expectedVersion` | number | ❌ No | Optimistic-concurrency guard; `409` if it does not match current `version` |
+| `idempotencyKey` | string (UUID) | ✅ Yes | Client-generated key; replays return the original result |
+
+#### Example Request
+
+```bash
+curl -X PUT "http://localhost:3000/username/alice/metadata" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "publicKey": "GBXGQ55JMQ4L2B6E7S8Y9Z0A1B2C3D4E5F6G7H8I7YWR",
+    "displayName": "Alice",
+    "avatarUrl": "https://cdn.quickex.example/avatars/alice.png",
+    "bio": "Stellar payments educator.",
+    "links": [{ "label": "website", "url": "https://alice.example" }],
+    "expectedVersion": 3,
+    "idempotencyKey": "7d2e3f4a-5b6c-7d8e-9f0a-1b2c3d4e5f60"
+  }'
+```
+
+#### Example Response (Success)
+
+```json
+{
+  "ok": true,
+  "username": "alice",
+  "version": 4,
+  "updatedAt": "2025-03-27T12:00:00Z",
+  "cacheInvalidated": true
+}
+```
+
+#### Status Codes
+
+- `200 OK` - Metadata written (or idempotent replay of a prior success)
+- `400 Bad Request` - Malformed username, invalid field, or missing idempotency key
+- `401 Unauthorized` - Missing or invalid signature over the metadata payload
+- `403 Forbidden` - `publicKey` does not own `username`
+- `404 Not Found` - `username` does not exist
+- `409 Conflict` - `expectedVersion` mismatch (concurrent write)
+- `413 Payload Too Large` - Metadata exceeds size limits
+- `503 Service Unavailable` - Dependency (DB/cache) unavailable; safe to retry with the same idempotency key
+
+#### Authorization
+
+- The caller must prove ownership of `publicKey` by signing the canonical
+  metadata payload. The signature is verified server-side before any write.
+- Metadata writes never change the `username → publicKey` mapping, so
+  self-custody and the financial invariants are preserved.
+
+#### Idempotency & Rollback
+
+- Every write requires an `idempotencyKey`. Replaying the same key returns
+  the original `200 OK` response without re-applying the change.
+- The metadata row and its `version` bump are written in a single
+  transaction. On dependency failure the transaction is rolled back and the
+  previous metadata remains active.
+- Cache invalidation runs after the transaction commits. If invalidation
+  fails, the write still succeeds and the cache entry is left to expire via
+  its TTL; the response reports `cacheInvalidated: false` so callers can
+  observe the degraded mode.
+
+#### Observability
+
+- Structured log fields: `event=username.metadata.write`, `username`,
+  `publicKey` (hashed), `version`, `idempotencyKey`, `outcome`,
+  `cacheInvalidated`, `latencyMs`. No secrets or raw keys are logged.
+- Metrics: `username_metadata_write_total{outcome}`,
+  `username_metadata_write_latency_ms`,
+  `username_metadata_cache_invalidation_total{hit|miss|error}`.
+
+---
+
+### 8. Feature Gate
+
+Verified profile metadata is gated behind the `PROFILE_METADATA_ENABLED`
+configuration flag. When the flag is off (the default on mainnet until the
+rollout issue is closed), the metadata endpoints return `404 Not Found` and
+no metadata is read or written. Testnet enables the flag by default.
+
+---
+
+## Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PROFILE_METADATA_ENABLED` | `false` (mainnet), `true` (testnet) | Feature gate for verified profile metadata |
+| `PROFILE_METADATA_CACHE_TTL_SECONDS` | `300` | Safety-net TTL for metadata cache entries |
+| `PROFILE_METADATA_MAX_LINKS` | `5` | Maximum number of links per profile |
+
+---
+
+## Operational Procedure
+
+1. Enable `PROFILE_METADATA_ENABLED` on testnet and verify the happy path
+   with the `PUT`/`GET` examples above.
+2. Confirm cache invalidation by writing metadata and immediately reading it
+   back; the read must reflect the new `version`.
+3. Roll out to mainnet by flipping the flag; no migration is required because
+   metadata is stored alongside the existing username mapping.
+4. To roll back, disable the flag; metadata endpoints return `404` and the
+   existing `username → publicKey` mapping is unaffected.

@@ -27,6 +27,7 @@ describe('ContractRegistryService', () => {
     const result = await ContractRegistryService.sync('http://localhost');
     expect(global.fetch).toHaveBeenCalledWith(
       'http://localhost/contracts/registry',
+      { headers: {} },
     );
     expect(result.registry.quickex.id).toBe('C123');
     expect(result.source).toBe('network');
@@ -34,6 +35,37 @@ describe('ContractRegistryService', () => {
     expect(AsyncStorage.setItem).toHaveBeenCalledWith(
       '@contract_registry',
       expect.stringContaining('C123')
+    );
+  });
+
+  it('reuses a cached registry after a matching ETag returns 304', async () => {
+    const mockBody = envelope({ quickex: { id: 'C304', version: 1 } });
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: { get: () => 'W/"registry-v1"' },
+        json: () => Promise.resolve(mockBody),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 304,
+        headers: { get: () => null },
+      });
+
+    await ContractRegistryService.sync('http://localhost/');
+    const result = await ContractRegistryService.sync('http://localhost');
+
+    expect(global.fetch).toHaveBeenLastCalledWith(
+      'http://localhost/contracts/registry',
+      { headers: { 'If-None-Match': 'W/"registry-v1"' } },
+    );
+    expect(result.registry.quickex.id).toBe('C304');
+    expect(result.source).toBe('network');
+    expect(result.isStale).toBe(false);
+    expect(AsyncStorage.setItem).toHaveBeenLastCalledWith(
+      '@contract_registry',
+      expect.stringContaining('W/"registry-v1"'),
     );
   });
 

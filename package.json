@@ -8,12 +8,16 @@
     "lint": "turbo run lint",
     "type-check": "turbo run type-check",
     "test": "turbo run test",
+    "test:mutation": "pnpm --filter @quickex/backend run test:mutation",
+    "db:verify-migrations": "pnpm --filter @quickex/backend run db:verify-migrations",
+    "test:perf:horizon": "pnpm --filter @quickex/backend run test:perf:horizon",
+    "check:generated-types": "node scripts/check-generated-types.js",
     "secret-scan": "bash scripts/secret-scan.sh",
     "secret-scan:verify": "bash scripts/secret-scan.sh --verify",
     "secret-scan:full": "bash scripts/secret-scan.sh --full"
   },
   "devDependencies": {
-    "turbo": "^2.10.12",
+    "turbo": "^2.10.13",
     "typescript": "7.0.2"
   },
   "pnpm": {

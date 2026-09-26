@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "policyId": "quickex.asset-listing",
+  "policyVersion": "1.0.0",
+  "effectiveFrom": "2026-09-25",
+  "owner": "backend + contract maintainers",
+  "doc": "docs/policies/ASSET-LISTING-POLICY.md",
+  "mirror": "app/backend/src/asset-listing/asset-listing.policy.ts",
+  "featureFlags": {
+    "enforcement": "assets.listing_policy",
+    "decisions": "assets.listing_decisions",
+    "defaultEnabledNetworks": ["local", "testnet", "development", "test"],
+    "defaultDisabledNetworks": ["mainnet", "production"]
+  },
+  "minIssuerAccountAgeDays": 180,
+  "coolingOffDaysBeforeRelist": 30,
+  "suspensionMaxDays": 30,
+  "scamReportThreshold": {
+    "uniqueReports": 5,
+    "windowDays": 30
+  },
+  "tiers": {
+    "XLM": "native",
+    "USDC": "verified",
+    "AQUA": "verified",
+    "yXLM": "community"
+  },
+  "evidence": {
+    "toml_document": { "maxAgeDays": 92, "requiredForTiers": ["verified", "community"] },
+    "attestation_of_reserve": { "maxAgeDays": 92, "requiredForTiers": ["verified"] },
+    "issuer_identity": { "maxAgeDays": 365, "requiredForTiers": ["verified"] },
+    "sanctions_screen": { "maxAgeDays": 365, "requiredForTiers": ["verified"] },
+    "security_review": { "maxAgeDays": 730, "requiredForTiers": ["verified"] }
+  },
+  "transitions": [
+    { "from": "pending", "to": "listed", "action": "list" },
+    { "from": "pending", "to": "rejected", "action": "reject" },
+    { "from": "listed", "to": "suspended", "action": "suspend" },
+    { "from": "listed", "to": "delisted", "action": "delist" },
+    { "from": "suspended", "to": "listed", "action": "list" },
+    { "from": "suspended", "to": "delisted", "action": "delist" },
+    { "from": "delisted", "to": "listed", "action": "list" }
+  ],
+  "statuses": ["pending", "listed", "suspended", "delisted", "rejected"],
+  "servedStatuses": ["listed"],
+  "delistingTriggers": [
+    { "id": "issuer_key_compromised", "severity": "critical", "immediate": true, "defaultResolution": "delisted" },
+    { "id": "reserve_or_peg_failure", "severity": "critical", "immediate": true, "defaultResolution": "delisted" },
+    { "id": "sanctions_or_legal_order", "severity": "critical", "immediate": true, "defaultResolution": "delisted" },
+    { "id": "fraud_or_scam_reports", "severity": "high", "immediate": false, "defaultResolution": "delisted" },
+    { "id": "metadata_divergence", "severity": "medium", "immediate": false, "defaultResolution": "suspended" },
+    { "id": "evidence_expired", "severity": "medium", "immediate": true, "defaultResolution": "suspended" },
+    { "id": "issuer_requested", "severity": "high", "immediate": false, "defaultResolution": "delisted" },
+    { "id": "network_mismatch", "severity": "high", "immediate": true, "defaultResolution": "delisted" },
+    { "id": "policy_violation", "severity": "high", "immediate": false, "defaultResolution": "suspended" }
+  ],
+  "errorCodes": {
+    "ASSET_LISTING_UNAUTHORIZED": 403,
+    "ASSET_NOT_FOUND": 404,
+    "ASSET_LISTING_EVIDENCE_INCOMPLETE": 422,
+    "ASSET_LISTING_EVIDENCE_EXPIRED": 422,
+    "ASSET_LISTING_INVALID_TRANSITION": 422,
+    "ASSET_LISTING_COOLING_OFF_ACTIVE": 409,
+    "ASSET_LISTING_IDEMPOTENCY_CONFLICT": 409,
+    "ASSET_LISTING_DECISIONS_DISABLED": 403,
+    "ASSET_LISTING_REGISTRY_UNAVAILABLE": 503
+  },
+  "metrics": [
+    "asset_listing_decisions_total",
+    "asset_listing_decision_duration_seconds",
+    "asset_listing_assets_served",
+    "asset_listing_assets_suspended",
+    "asset_listing_policy_denials_total"
+  ]
+}

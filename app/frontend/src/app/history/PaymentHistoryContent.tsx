@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { fetchActivityFeed, type ActivityFeedItem } from "@/hooks/activityFeedApi";
+import { cacheInvalidator } from "@/lib/cacheInvalidation";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -275,7 +276,7 @@ export default function PaymentHistoryContent() {
   // Load data
   // ---------------------------------------------------------------------------
 
-  useEffect(() => {
+  const loadData = useCallback(() => {
     setLoading(true);
     fetchActivityFeed(200).then(({ items: fetched, degraded: deg }) => {
       setItems(fetched);
@@ -283,6 +284,16 @@ export default function PaymentHistoryContent() {
       setLoading(false);
     });
   }, []);
+
+  useEffect(() => {
+    loadData();
+    const unsubscribe = cacheInvalidator.subscribe((event) => {
+      if (event.type === "payment_completed" || event.type === "activity_feed_cleared") {
+        loadData();
+      }
+    });
+    return () => unsubscribe();
+  }, [loadData]);
 
   // ---------------------------------------------------------------------------
   // Sync filters → URL (debounced)

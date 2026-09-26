@@ -482,6 +482,11 @@ export default function WalletConnectScreen() {
                         },
                       ]}
                       onPress={() => setSelectedWallet(w.type)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Select ${w.label} wallet`}
+                      accessibilityHint={w.description}
+                      accessibilityState={{ selected: selectedWallet === w.type }}
+                      testID={`wallet-option-${w.type}`}
                     >
                       <View style={styles.walletOptionCopy}>
                         <Text
@@ -523,6 +528,11 @@ export default function WalletConnectScreen() {
                 onPress={() => {
                   void handleConnect();
                 }}
+                accessibilityRole="button"
+                accessibilityLabel={isConnecting ? "Connecting wallet" : "Connect Wallet"}
+                accessibilityHint="Connects the selected Stellar wallet to QuickEx"
+                accessibilityState={{ disabled: isConnecting || !isConnected, busy: isConnecting }}
+                testID="connect-wallet-button"
               >
                 <Text
                   style={[
@@ -544,6 +554,10 @@ export default function WalletConnectScreen() {
                   { borderColor: theme.buttonSecondaryBorder },
                 ]}
                 onPress={handleSwitchAccount}
+                accessibilityRole="button"
+                accessibilityLabel="Switch Account"
+                accessibilityHint="Switches to a different Stellar wallet account"
+                testID="switch-account-button"
               >
                 <Ionicons
                   name="swap-horizontal-outline"
@@ -570,6 +584,10 @@ export default function WalletConnectScreen() {
                 onPress={() => {
                   void revealSessionToken();
                 }}
+                accessibilityRole="button"
+                accessibilityLabel="Reveal Secure Session Token"
+                accessibilityHint="Displays the decrypted session token for debugging"
+                testID="reveal-token-button"
               >
                 <Ionicons
                   name="key-outline"
@@ -608,6 +626,11 @@ export default function WalletConnectScreen() {
                 onPress={() => {
                   void handleDisconnect();
                 }}
+                accessibilityRole="button"
+                accessibilityLabel={isDisconnecting ? "Disconnecting wallet" : "Disconnect Wallet"}
+                accessibilityHint="Disconnects your wallet from QuickEx"
+                accessibilityState={{ disabled: isDisconnecting }}
+                testID="disconnect-wallet-button"
               >
                 <Ionicons
                   name="log-out-outline"
