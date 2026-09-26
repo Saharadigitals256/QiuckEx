@@ -888,6 +888,8 @@ export class SupabaseService {
     listingId: string,
     bidderPublicKey: string,
     bidAmount: number,
+    signature: string,
+    signedAt: number,
   ): Promise<MarketplaceBid> {
     const { data, error } = await this.client
       .from("username_bids")
@@ -895,6 +897,8 @@ export class SupabaseService {
         listing_id: listingId,
         bidder_public_key: bidderPublicKey,
         bid_amount: bidAmount,
+        signature,
+        signed_at: new Date(signedAt).toISOString(),
       })
       .select()
       .single();

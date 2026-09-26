@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { Keypair } from '@stellar/stellar-sdk';
 import { SupabaseService, MarketplaceListing, MarketplaceBid } from '../supabase/supabase.service';
 import { SupabaseUniqueConstraintError } from '../supabase/supabase.errors';
 import { UsernamesService } from '../usernames/usernames.service';
@@ -77,7 +78,6 @@ export class MarketplaceService {
     viewerPublicKey?: string | null,
   ): Promise<MarketplaceListingDetailDto> {
     const listing = await this.getListing(listingId);
-
     const bidPage = await this.supabase.getBidsByListingIdPaginated(
       listingId,
       50,
@@ -129,6 +129,8 @@ export class MarketplaceService {
     listingId: string,
     bidderPublicKey: string,
     bidAmount: number,
+    signature: string,
+    signedAt: number,
   ): Promise<MarketplaceBid> {
     const listing = await this.getListing(listingId);
 
@@ -146,7 +148,34 @@ export class MarketplaceService {
       );
     }
 
-    return this.supabase.placeBid(listingId, bidderPublicKey, bidAmount);
+    if (Math.abs(Date.now() - signedAt) > 5 * 60 * 1000) {
+      throw new MarketplaceError(
+        MarketplaceErrorCode.INVALID_SIGNATURE,
+        'Bid authorization has expired',
+      );
+    }
+
+    const message = `quickex:marketplace:bid:${listingId}:${bidderPublicKey}:${bidAmount}:${signedAt}`;
+    try {
+      const valid = Keypair.fromPublicKey(bidderPublicKey).verify(
+        Buffer.from(message, 'utf8'),
+        Buffer.from(signature, 'base64'),
+      );
+      if (!valid) throw new Error('signature mismatch');
+    } catch {
+      throw new MarketplaceError(
+        MarketplaceErrorCode.INVALID_SIGNATURE,
+        'Invalid bid authorization signature',
+      );
+    }
+
+    return this.supabase.placeBid(
+      listingId,
+      bidderPublicKey,
+      bidAmount,
+      signature,
+      signedAt,
+    );
   }
 
   async getBids(listingId: string, limit: number = 20, cursor: string | null = null): Promise<{ bids: MarketplaceBid[]; next_cursor: string | null; has_more: boolean }> {

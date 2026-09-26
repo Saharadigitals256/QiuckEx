@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsNotEmpty, IsNumber, IsString, Min } from 'class-validator';
+import { IsInt, IsNotEmpty, IsNumber, IsString, Min } from 'class-validator';
 import { IsStellarPublicKey } from '../../dto/validators';
 
 export class PlaceBidDto {
@@ -13,4 +13,11 @@ export class PlaceBidDto {
   @IsNumber()
   @Min(0.0000001)
   bidAmount!: number;
+  @ApiProperty({ description: 'Base64 Ed25519 signature over the bid authorization message' })
+  @IsString()
+  @IsNotEmpty()
+  signature!: string;
+  @ApiProperty({ description: 'Unix timestamp in milliseconds covered by the signature' })
+  @IsInt()
+  signedAt!: number;
 }

@@ -8,6 +8,8 @@ import { JobQueueModule } from "../job-queue/job-queue.module";
 import { FeatureFlagsModule } from "../feature-flags/feature-flags.module";
 import { AuditModule } from "../audit/audit.module";
 import { PreviewScopeModule } from "../preview-scope/preview-scope.module";
+import { AuthModule } from "../auth/auth.module";
+import { IndexerLagModule } from "../indexer-lag/indexer-lag.module";
 import { ReconciliationService } from "./reconciliation.service";
 import { ReconciliationWorkerService } from "./reconciliation-worker.service";
 import { BackfillService } from "./backfill.service";
@@ -25,6 +27,8 @@ import { ReconciliationController } from "./reconciliation.controller";
     FeatureFlagsModule,
     AuditModule,
     PreviewScopeModule,
+    AuthModule,
+    IndexerLagModule,
   ],
   providers: [
     ReconciliationService,
