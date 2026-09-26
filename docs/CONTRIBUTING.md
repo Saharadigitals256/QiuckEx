@@ -105,5 +105,7 @@ Verify that:
 - Rust tests pass (`cargo test`).
 - TypeScript tests pass (`npm test`).
 - Linting and secret scanning pass (`./scripts/secret-scan.sh --verify`).
+- The dependency gate passes (`node scripts/deps/check.mjs`) after adding or upgrading any dependency — including `pnpm install` and committing the updated `pnpm-lock.yaml`.
+- The governance gate passes (`node scripts/governance/check.mjs`) if you touched a policy or ADR.
 - Relevant capability maps and contract maps are updated in the same PR.
 - Record assumptions about network, custody, and backward compatibility in the PR description.
