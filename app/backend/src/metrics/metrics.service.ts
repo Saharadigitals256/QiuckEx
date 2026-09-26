@@ -28,6 +28,14 @@ export class MetricsService implements OnModuleInit {
   private abuseSignalsByOutcome: client.Counter<string>;
   private abuseScoresHistogram: client.Histogram<string>;
   private paymentLinksExpired: client.Counter<string>;
+  // Escrow state transition metrics
+  private escrowStateTransitions: client.Counter<string>;
+  private escrowStateTransitionDuration: client.Histogram<string>;
+  private escrowFinalizedTotal: client.Counter<string>;
+  private escrowRefundedTotal: client.Counter<string>;
+  private escrowDisputedTotal: client.Counter<string>;
+  private escrowExtendedTotal: client.Counter<string>;
+  private escrowCleanedTotal: client.Counter<string>;
   private initialized = false;
 
   onModuleInit() {
@@ -180,6 +188,50 @@ export class MetricsService implements OnModuleInit {
         help: "Total number of payment links marked as expired by the expiry sweep",
       });
 
+      // Escrow state transition metrics
+      this.escrowStateTransitions = new client.Counter({
+        name: "escrow_state_transitions_total",
+        help: "Total number of escrow state transitions",
+        labelNames: ["from_state", "to_state", "trigger"],
+      });
+
+      this.escrowStateTransitionDuration = new client.Histogram({
+        name: "escrow_state_transition_duration_seconds",
+        help: "Duration of escrow state transitions in seconds",
+        labelNames: ["from_state", "to_state", "trigger"],
+        buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10],
+      });
+
+      this.escrowFinalizedTotal = new client.Counter({
+        name: "escrow_finalized_total",
+        help: "Total number of escrows finalized (spent)",
+        labelNames: ["trigger"], // withdraw, resolve_dispute, resolve_dispute_multi_sig
+      });
+
+      this.escrowRefundedTotal = new client.Counter({
+        name: "escrow_refunded_total",
+        help: "Total number of escrows refunded",
+        labelNames: ["trigger"], // refund, finalize_expired_escrow, resolve_dispute
+      });
+
+      this.escrowDisputedTotal = new client.Counter({
+        name: "escrow_disputed_total",
+        help: "Total number of escrows entering dispute state",
+        labelNames: ["trigger"], // dispute
+      });
+
+      this.escrowExtendedTotal = new client.Counter({
+        name: "escrow_extended_total",
+        help: "Total number of escrow expiry extensions",
+        labelNames: ["trigger"], // extend_escrow_expiry
+      });
+
+      this.escrowCleanedTotal = new client.Counter({
+        name: "escrow_cleaned_total",
+        help: "Total number of escrows cleaned up (storage reclaimed)",
+        labelNames: ["status"], // spent, refunded
+      });
+
       this.register.registerMetric(this.httpRequestDuration);
       this.register.registerMetric(this.httpRequestTotal);
       this.register.registerMetric(this.rateLimitedRequestsTotal);
@@ -204,6 +256,14 @@ export class MetricsService implements OnModuleInit {
       this.register.registerMetric(this.abuseSignalsByOutcome);
       this.register.registerMetric(this.abuseScoresHistogram);
       this.register.registerMetric(this.paymentLinksExpired);
+      // Escrow state transition metrics
+      this.register.registerMetric(this.escrowStateTransitions);
+      this.register.registerMetric(this.escrowStateTransitionDuration);
+      this.register.registerMetric(this.escrowFinalizedTotal);
+      this.register.registerMetric(this.escrowRefundedTotal);
+      this.register.registerMetric(this.escrowDisputedTotal);
+      this.register.registerMetric(this.escrowExtendedTotal);
+      this.register.registerMetric(this.escrowCleanedTotal);
 
       this.initialized = true;
     } catch (error) {
@@ -454,6 +514,69 @@ export class MetricsService implements OnModuleInit {
     if (!this.initialized || !this.paymentLinksExpired) return;
     try {
       this.paymentLinksExpired.inc();
+    } catch (error) {}
+  }
+
+  // Escrow state transition metrics
+  recordEscrowStateTransition(
+    fromState: string,
+    toState: string,
+    trigger: string,
+    durationSeconds?: number,
+  ) {
+    if (!this.initialized || !this.escrowStateTransitions) {
+      return;
+    }
+    try {
+      this.escrowStateTransitions.labels(fromState, toState, trigger).inc();
+      if (durationSeconds !== undefined && this.escrowStateTransitionDuration) {
+        this.escrowStateTransitionDuration.labels(fromState, toState, trigger).observe(durationSeconds);
+      }
+    } catch (error) {}
+  }
+
+  recordEscrowFinalized(trigger: "withdraw" | "resolve_dispute" | "resolve_dispute_multi_sig") {
+    if (!this.initialized || !this.escrowFinalizedTotal) {
+      return;
+    }
+    try {
+      this.escrowFinalizedTotal.labels(trigger).inc();
+    } catch (error) {}
+  }
+
+  recordEscrowRefunded(trigger: "refund" | "finalize_expired_escrow" | "resolve_dispute") {
+    if (!this.initialized || !this.escrowRefundedTotal) {
+      return;
+    }
+    try {
+      this.escrowRefundedTotal.labels(trigger).inc();
+    } catch (error) {}
+  }
+
+  recordEscrowDisputed(trigger: "dispute") {
+    if (!this.initialized || !this.escrowDisputedTotal) {
+      return;
+    }
+    try {
+      this.escrowDisputedTotal.labels(trigger).inc();
+    } catch (error) {}
+  }
+
+  recordEscrowExtended(trigger: "extend_escrow_expiry") {
+    if (!this.initialized || !this.escrowExtendedTotal) {
+      return;
+    }
+    try {
+      this.escrowExtendedTotal.labels(trigger).inc();
+    } catch (error) {}
+  }
+
+  recordEscrowCleaned(status: "spent" | "refunded") {
+    if (!this.initialized || !this.escrowCleanedTotal) {
+      return;
+    }
+    try {
+      this.escrowCleanedTotal.labels(status).inc();
     } catch (error) {}
   }
 }
