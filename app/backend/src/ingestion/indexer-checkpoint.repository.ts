@@ -38,4 +38,27 @@ export class IndexerCheckpointRepository {
       throw error;
     }
   }
+
+  async recordAnomaly(input: {
+    contractId: string;
+    anomalyType: "gap" | "reorg" | "duplicate" | "out_of_order";
+    ledger?: number | null;
+    previousLedger?: number | null;
+    pagingToken?: string | null;
+    details?: Record<string, unknown>;
+  }): Promise<void> {
+    const { error } = await this.supabase.getClient().from("indexer_anomalies").insert({
+      contract_id: input.contractId,
+      anomaly_type: input.anomalyType,
+      ledger: input.ledger ?? null,
+      previous_ledger: input.previousLedger ?? null,
+      paging_token: input.pagingToken ?? null,
+      details: input.details ?? {},
+    });
+
+    if (error) {
+      this.logger.error(`Failed to record indexer anomaly for ${input.contractId}: ${error.message}`);
+      throw error;
+    }
+  }
 }

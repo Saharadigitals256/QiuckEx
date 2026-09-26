@@ -107,6 +107,15 @@ export class SorobanEventIndexerService {
     dualReadConfig?: DualReadConfig,
     force = false,
   ): Promise<LedgerRangeResult> {
+    const storedLastLedger = force
+      ? null
+      : await this.checkpointRepo.getLastLedger(contractId);
+    if (storedLastLedger !== null && storedLastLedger + 1 < fromLedger) {
+      await this.recordAnomaly(contractId, "gap", undefined, storedLastLedger, {
+        requestedFromLedger: fromLedger,
+      });
+    }
+
     const effectiveFrom = force
       ? fromLedger
       : await this.resolveStartLedger(contractId, fromLedger);
@@ -175,6 +184,8 @@ export class SorobanEventIndexerService {
     let skippedUnknownSchema = 0;
     let parseFailures = 0;
     let nextCursor = cursor;
+    let previousLedger: number | null = null;
+    const seenPagingTokens = new Set<string>();
 
     while (true) {
       const { records, nextCursor: returnedCursor } = await this.fetchPage(
@@ -185,6 +196,17 @@ export class SorobanEventIndexerService {
       );
 
       if (records.length === 0) break;
+
+      for (const raw of records) {
+        if (previousLedger !== null && raw.ledger < previousLedger) {
+          await this.recordAnomaly(contractId, "reorg", raw, previousLedger);
+        }
+        if (seenPagingTokens.has(raw.paging_token)) {
+          await this.recordAnomaly(contractId, "duplicate", raw, previousLedger);
+        }
+        seenPagingTokens.add(raw.paging_token);
+        previousLedger = raw.ledger;
+      }
 
       for (const raw of records) {
         processed++;
@@ -215,8 +237,9 @@ export class SorobanEventIndexerService {
       nextCursor = returnedCursor;
     }
 
-    // Final checkpoint
-    await this.checkpointRepo.saveLastLedger(contractId, toLedger);
+    if (previousLedger !== null) {
+      await this.checkpointRepo.saveLastLedger(contractId, previousLedger);
+    }
 
     return { processed, persisted, skippedUnknownSchema, parseFailures };
   }
@@ -320,6 +343,10 @@ export class SorobanEventIndexerService {
     return this.unparsedRepo.listPending(limit, filters);
   }
 
+  async listDeadLetterEvents(limit = 100) {
+    return this.unparsedRepo.listDeadLetter(limit);
+  }
+
   async replayUnparsedEvents(limit = 100): Promise<ReplayUnparsedResult> {
     const pending = await this.unparsedRepo.listPending(limit);
     return this.replayBatch(pending);
@@ -345,7 +372,7 @@ export class SorobanEventIndexerService {
     const records: UnparsedSorobanEventRecord[] = [];
     for (const token of pagingTokens) {
       const record = await this.unparsedRepo.getByPagingToken(token);
-      if (record && record.status === "pending") {
+      if (record && record.status !== "replayed") {
         records.push(record);
       }
     }
@@ -388,7 +415,15 @@ export class SorobanEventIndexerService {
   ): Promise<"unknown_schema_version" | "parse_failure" | "ignored"> {
     const metadata = this.parser.inspect(raw);
     if (!metadata) {
-      return "ignored";
+      if (this.parser.isWellFormedXdr(raw)) return "ignored";
+
+      await this.unparsedRepo.save({
+        raw,
+        reason: "parse_failure",
+        errorMessage: "Malformed Soroban event XDR",
+      });
+      this.metrics.recordError("soroban_indexer", "parse_failure");
+      return "parse_failure";
     }
 
     if (
@@ -415,5 +450,33 @@ export class SorobanEventIndexerService {
       errorMessage: "Parser returned null for a supported schema version",
     });
     return "parse_failure";
+  }
+
+  private async recordAnomaly(
+    contractId: string,
+    anomalyType: "gap" | "reorg" | "duplicate" | "out_of_order",
+    raw?: RawHorizonContractEvent,
+    previousLedger?: number | null,
+    details?: Record<string, unknown>,
+  ): Promise<void> {
+    const repository = this.checkpointRepo as IndexerCheckpointRepository & {
+      recordAnomaly?: (input: {
+        contractId: string;
+        anomalyType: "gap" | "reorg" | "duplicate" | "out_of_order";
+        ledger?: number | null;
+        previousLedger?: number | null;
+        pagingToken?: string | null;
+        details?: Record<string, unknown>;
+      }) => Promise<void>;
+    };
+    if (!repository.recordAnomaly) return;
+    await repository.recordAnomaly({
+      contractId,
+      anomalyType,
+      ledger: raw?.ledger,
+      previousLedger,
+      pagingToken: raw?.paging_token,
+      details,
+    });
   }
 }

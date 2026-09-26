@@ -105,6 +105,13 @@ export class SorobanIndexerController {
     });
   }
 
+  @Get("unparsed-events/dead-letter")
+  @ApiOperation({ summary: "List Soroban events exhausted by replay attempts" })
+  @ApiResponse({ status: 200, description: "Dead-letter events" })
+  listDeadLetter(@Query("limit") limit?: string): Promise<UnparsedSorobanEventRecord[]> {
+    return this.indexer.listDeadLetterEvents(Number(limit ?? 100));
+  }
+
   @Post("unparsed-events/replay")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({

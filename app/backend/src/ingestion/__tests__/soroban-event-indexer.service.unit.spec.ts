@@ -293,6 +293,26 @@ describe("SorobanEventIndexerService", () => {
     );
   });
 
+  it("retains events with malformed XDR for later replay", async () => {
+    const mocks = buildMocks();
+    const svc = buildService(mocks);
+    const malformed = makeEscrowDepositedRaw(102, "102-1");
+    malformed.topic = ["not-valid-base64-xdr"];
+    mockHorizonPage([malformed]);
+
+    const result = await svc.indexLedgerRange(CONTRACT_ID, 102, 102);
+
+    expect(result.parseFailures).toBe(1);
+    expect(result.skippedUnknownSchema).toBe(0);
+    expect(mocks.unparsedRepo.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        raw: malformed,
+        reason: "parse_failure",
+        errorMessage: "Malformed Soroban event XDR",
+      }),
+    );
+  });
+
   it("replays retained unparsed events when they parse successfully", async () => {
     const mocks = buildMocks();
     const record = makeEscrowDepositedRaw(102, "102-1");

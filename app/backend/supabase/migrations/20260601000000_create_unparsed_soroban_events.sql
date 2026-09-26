@@ -26,3 +26,4 @@ CREATE INDEX IF NOT EXISTS unparsed_soroban_events_contract_idx
 
 COMMENT ON TABLE unparsed_soroban_events IS
   'Raw Soroban events retained when schema versions are unknown or parsing fails.';
+
