@@ -13,10 +13,10 @@ export class AdminEventRepository {
 
   constructor(private readonly supabase: SupabaseService) {}
 
-  async upsertEvent(event: AdminEvent): Promise<void> {
+  async upsertEvent(event: AdminEvent): Promise<boolean> {
     const payload = this.buildPayload(event);
 
-    const { error } = await this.supabase.getClient()
+    const { data, error } = await this.supabase.getClient()
       .from("admin_events")
       .upsert(
         {
@@ -30,12 +30,14 @@ export class AdminEventRepository {
           paging_token: event.pagingToken,
         },
         { onConflict: "tx_hash,event_type", ignoreDuplicates: true },
-      );
+      )
+      .select("id");
 
     if (error) {
       this.logger.error(`Failed to upsert ${event.eventType} tx=${event.txHash}: ${error.message}`);
       throw error;
     }
+    return Boolean(data?.length);
   }
 
   private buildPayload(event: AdminEvent): Record<string, unknown> {

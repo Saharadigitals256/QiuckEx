@@ -1,13 +1,28 @@
 {
-  "name": "Stella Wave DevContainer",
+  "name": "QuickEx DevContainer",
   "dockerFile": "Dockerfile",
   "settings": {
     "terminal.integrated.shell.linux": "/bin/bash"
   },
-  "postCreateCommand": "pnpm install && rustup update && cargo install --locked --git https://github.com/stellar/soroban-tools soroban-cli",
+  "containerEnv": {
+    "RUSTUP_HOME": "/usr/local/rustup",
+    "CARGO_HOME": "/usr/local/cargo",
+    "PATH": "/usr/local/cargo/bin:/usr/local/bin:${containerEnv:PATH}"
+  },
+  "postCreateCommand": "pnpm install",
   "forwardPorts": [3000, 4000, 8000],
   "remoteUser": "vscode",
   "features": {
     "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "rust-lang.rust-analyzer",
+        "esbenp.prettier-vscode",
+        "tamasfe.even-better-toml"
+      ]
+    }
   }
 }

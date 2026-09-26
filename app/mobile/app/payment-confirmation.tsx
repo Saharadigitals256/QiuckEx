@@ -361,6 +361,11 @@ export default function PaymentConfirmationScreen() {
           ]} 
           onPress={handlePayWithWallet}
           disabled={isConnected === false}
+          accessibilityRole="button"
+          accessibilityLabel={isConnected === false ? "Offline: Payment Disabled" : "Pay with Wallet"}
+          accessibilityHint="Submits payment using your connected Stellar wallet"
+          accessibilityState={{ disabled: isConnected === false }}
+          testID="pay-with-wallet-button"
         >
           <Text style={[styles.primaryBtnText, { color: theme.buttonPrimaryText }]}>
             {isConnected === false ? "Offline: Payment Disabled" : "Pay with Wallet"}
@@ -369,6 +374,10 @@ export default function PaymentConfirmationScreen() {
         <Pressable
           style={styles.secondaryBtn}
           onPress={() => router.replace("/")}
+          accessibilityRole="button"
+          accessibilityLabel="Cancel payment"
+          accessibilityHint="Cancels this payment and returns to home screen"
+          testID="cancel-payment-button"
         >
           <Text style={[styles.secondaryBtnText, { color: theme.textSecondary }]}>Cancel</Text>
         </Pressable>
@@ -376,6 +385,11 @@ export default function PaymentConfirmationScreen() {
           style={[styles.secondaryBtn, { marginTop: 8 }]}
           onPress={handleSaveContact}
           disabled={savingContact || isConnected === false}
+          accessibilityRole="button"
+          accessibilityLabel={savingContact ? "Saving contact" : "Save recipient as contact"}
+          accessibilityHint="Saves this recipient address to your local contacts"
+          accessibilityState={{ disabled: savingContact || isConnected === false }}
+          testID="save-contact-button"
         >
           <Text style={[styles.secondaryBtnText, { color: theme.textSecondary }, isConnected === false && { opacity: 0.5 }]}>
             {savingContact ? "Saving..." : "Save Recipient as Contact"}

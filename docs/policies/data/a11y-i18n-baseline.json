@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "policyId": "quickex.a11y-i18n-baseline",
+  "owner": "docs/GOVERNANCE.md#owners",
+  "doc": "docs/policies/ACCESSIBILITY-LOCALIZATION-STANDARD.md",
+  "generatedFrom": "node scripts/governance/check.mjs --only a11y --write-baseline",
+  "knownGaps": {
+    "frontendA11yLintWired": false,
+    "mobileA11yLintWired": false,
+    "axeSmokeTests": false,
+    "perLocaleCatalogFiles": false
+  },
+  "acceptedGaps": [
+    {
+      "id": "frontend.a11y-lint-not-wired",
+      "surface": "frontend",
+      "reason": "eslint-plugin-jsx-a11y is not installed; config exists at eslint.a11y.config.mjs",
+      "owner": "frontend maintainers",
+      "expires": "next release train"
+    },
+    {
+      "id": "mobile.a11y-lint-not-wired",
+      "surface": "mobile",
+      "reason": "eslint-plugin-react-native-a11y not added yet",
+      "owner": "mobile maintainers",
+      "expires": "next release train"
+    },
+    {
+      "id": "frontend+mobile.axe-smoke-tests-missing",
+      "surface": "frontend+mobile",
+      "reason": "no axe integration; vitest + Testing Library are already available",
+      "owner": "frontend maintainers",
+      "expires": "next release train"
+    }
+  ],
+  "surfaces": {
+    "frontend": {
+      "catalogs": [
+        "en",
+        "es",
+        "fr"
+      ],
+      "declaredLocales": [
+        "en",
+        "es",
+        "fr"
+      ],
+      "declaredLocalesWithoutCatalog": [],
+      "missingKeys": {
+        "es": [
+          "listingPrice",
+          "noListings",
+          "yourListings"
+        ]
+      },
+      "orphanKeys": {},
+      "defaultKeyCount": 129
+    },
+    "mobile": {
+      "catalogs": [
+        "en",
+        "es",
+        "fr"
+      ],
+      "declaredLocales": [
+        "en"
+      ],
+      "declaredLocalesWithoutCatalog": [],
+      "missingKeys": {
+        "es": [
+          "connectWallet",
+          "contacts",
+          "hide",
+          "instantPayments",
+          "instantPaymentsDesc",
+          "scanToPay",
+          "show"
+        ],
+        "fr": [
+          "connectWallet",
+          "contacts",
+          "hide",
+          "instantPayments",
+          "instantPaymentsDesc",
+          "scanToPay",
+          "show"
+        ]
+      },
+      "orphanKeys": {},
+      "defaultKeyCount": 67
+    }
+  }
+}

@@ -1,17 +1,23 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { NetworkBadge } from "@/components/NetworkBadge";
 import { LocaleSwitcher } from "@/components/LocaleSwitcher";
 import '@/lib/i18n';
 import { useTranslation } from "react-i18next";
+import { resolveAuthenticatedPublicKey } from "@/lib/publicKey";
+import {
+  fetchProfileSettings,
+  ProfileSettingsRequestError,
+  saveProfileSettings,
+} from "@/hooks/profileSettingsApi";
 
 export default function Settings() {
   const { t } = useTranslation();
   const [form, setForm] = useState({
-    username: "john_doe",
+    username: "",
     primaryColor: "#6366f1",
     avatarUrl: "",
     bio: "",
@@ -21,10 +27,108 @@ export default function Settings() {
   });
 
   const [showPreview, setShowPreview] = useState(false);
+  const [walletPublicKey, setWalletPublicKey] = useState<string | null>(null);
+  const [profileVersion, setProfileVersion] = useState(0);
+  const [profileLoading, setProfileLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [reloadProfile, setReloadProfile] = useState(0);
 
-  const handleSave = () => {
-    console.log("Saving profile:", form);
-    // TODO: Call API to save profile
+  useEffect(() => {
+    const publicKey = resolveAuthenticatedPublicKey();
+    if (!publicKey) {
+      setProfileError("Connect the wallet that owns a QuickEx username to edit its profile.");
+      setProfileLoading(false);
+      return;
+    }
+
+    let active = true;
+    setWalletPublicKey(publicKey);
+    setProfileLoading(true);
+    setProfileError(null);
+    void fetchProfileSettings(publicKey)
+      .then((profiles) => {
+        if (!active) return;
+        const profile = profiles[0];
+        if (!profile) {
+          setProfileError("This wallet has no QuickEx username yet.");
+          return;
+        }
+        setForm({
+          username: profile.username,
+          primaryColor: profile.primaryColor,
+          avatarUrl: profile.avatarUrl,
+          bio: profile.bio,
+          twitterHandle: profile.twitterHandle,
+          discordHandle: profile.discordHandle,
+          githubHandle: profile.githubHandle,
+        });
+        setProfileVersion(profile.profileVersion);
+      })
+      .catch((err: unknown) => {
+        if (active) {
+          setProfileError(err instanceof Error ? err.message : "Unable to load profile settings.");
+        }
+      })
+      .finally(() => {
+        if (active) setProfileLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [reloadProfile]);
+
+  const profileReady = Boolean(walletPublicKey && form.username && profileVersion > 0);
+
+  const handleSave = async () => {
+    setSaveError(null);
+    setSaveMessage(null);
+    if (!profileReady || !walletPublicKey) {
+      setSaveError("Load a wallet-owned username before saving profile settings.");
+      return;
+    }
+    if (!/^#[0-9a-fA-F]{6}$/.test(form.primaryColor)) {
+      setSaveError("Primary color must be a six-digit hex color.");
+      return;
+    }
+    if (form.avatarUrl && (!/^https:\/\//i.test(form.avatarUrl) || form.avatarUrl.length > 2048)) {
+      setSaveError("Avatar URL must use HTTPS and be no longer than 2048 characters.");
+      return;
+    }
+    if (
+      form.bio.length > 160 ||
+      form.twitterHandle.length > 15 ||
+      !/^[A-Za-z0-9_]*$/.test(form.twitterHandle) ||
+      form.discordHandle.length > 32 ||
+      !/^[A-Za-z0-9-]*$/.test(form.discordHandle) ||
+      form.githubHandle.length > 39 ||
+      !/^[A-Za-z0-9-]*$/.test(form.githubHandle)
+    ) {
+      setSaveError("Check the bio and social handle length or format.");
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const profile = await saveProfileSettings({
+        ...form,
+        publicKey: walletPublicKey,
+        profileVersion,
+      });
+      setProfileVersion(profile.profileVersion);
+      setSaveMessage("Profile settings saved.");
+    } catch (err: unknown) {
+      if (err instanceof ProfileSettingsRequestError && err.status === 409) {
+        setSaveError("This profile changed in another session. Reload the latest version before saving.");
+      } else {
+        setSaveError(err instanceof Error ? err.message : "Unable to save profile settings.");
+      }
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -118,6 +222,32 @@ export default function Settings() {
             {t('developerTab')}
           </Link>
         </nav>
+
+        {profileLoading ? (
+          <p role="status" className="mb-4 text-sm text-muted">Loading profile settings...</p>
+        ) : null}
+        {profileError ? (
+          <div role="alert" className="mb-4 border-l-4 border-amber-500 bg-amber-500/10 px-4 py-3 text-sm text-foreground">
+            {profileError}
+          </div>
+        ) : null}
+        {saveError ? (
+          <div role="alert" className="mb-4 border-l-4 border-red-500 bg-red-500/10 px-4 py-3 text-sm text-foreground">
+            <p>{saveError}</p>
+            {saveError.includes("another session") ? (
+              <button
+                type="button"
+                onClick={() => setReloadProfile((current) => current + 1)}
+                className="mt-2 font-semibold underline"
+              >
+                Reload latest profile
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+        {saveMessage ? (
+          <p role="status" className="mb-4 text-sm font-semibold text-success">{saveMessage}</p>
+        ) : null}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 lg:gap-8">
           {/* Settings Form */}
@@ -263,10 +393,12 @@ export default function Settings() {
             {/* Action Buttons - Desktop */}
             <div className="hidden sm:flex gap-3 sm:gap-4">
               <button
-                onClick={handleSave}
+                type="button"
+                onClick={() => void handleSave()}
+                disabled={!profileReady || profileLoading || isSaving}
                 className="flex-1 px-4 sm:px-6 py-3 sm:py-4 bg-indigo-500 text-white font-bold rounded-xl hover:scale-105 active:scale-95 transition text-sm sm:text-base"
               >
-                {t('saveChanges')}
+                {isSaving ? "Saving..." : t('saveChanges')}
               </button>
               <button
                 onClick={() => setShowPreview(!showPreview)}
@@ -307,10 +439,12 @@ export default function Settings() {
       <div className="sm:hidden fixed bottom-0 left-0 right-0 z-30 p-4 bg-card backdrop-blur-3xl border-t border-border">
         <div className="flex gap-3">
           <button
-            onClick={handleSave}
-            className="flex-1 px-4 py-3 bg-indigo-500 text-white font-bold rounded-xl active:scale-95 transition"
+            type="button"
+            onClick={() => void handleSave()}
+            disabled={!profileReady || profileLoading || isSaving}
+            className="flex-1 px-4 py-3 bg-indigo-500 text-white font-bold rounded-xl active:scale-95 transition disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {t('saveChanges')}
+            {isSaving ? "Saving..." : t('saveChanges')}
           </button>
           <button
             onClick={() => setShowPreview(!showPreview)}

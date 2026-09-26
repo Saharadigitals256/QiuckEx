@@ -3,6 +3,10 @@
 This document outlines the process for promoting a release from the staging environment to production.
 
 > Before promoting, complete the cross-app release gate in [RELEASE_READINESS_CHECKLIST.md](RELEASE_READINESS_CHECKLIST.md).
+> The automated half of that gate is one command: `./scripts/rc-validate.sh` — see
+> [docs/RELEASE-CANDIDATE-VALIDATION.md](docs/RELEASE-CANDIDATE-VALIDATION.md).
+> A candidate that has not passed it is not ready to promote, and a green gate
+> does not replace the manual checklist items.
 
 ## Overview
 

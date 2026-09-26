@@ -26,6 +26,7 @@ import { JobQueueService } from './job-queue.service';
 import { JobRepository, JobFilters } from './job.repository';
 import { JobReplayRepository } from './job-replay.repository';
 import { JobType, JobStatus, Job } from './types';
+import { DerivedRecordRepairPayload } from './types';
 import { ApiKeyGuard } from '../auth/guards/api-key.guard';
 import { RequireScopes } from '../auth/decorators/require-scopes.decorator';
 
@@ -35,6 +36,10 @@ import { RequireScopes } from '../auth/decorators/require-scopes.decorator';
 export class BulkRetryRequestDto {
   type: JobType;
   status?: JobStatus;
+}
+
+export class DerivedRecordRepairRequestDto implements DerivedRecordRepairPayload {
+  transactionHashes!: string[];
 }
 
 /**
@@ -81,6 +86,19 @@ export class JobAdminController {
     private readonly jobRepository: JobRepository,
     private readonly jobReplayRepository: JobReplayRepository,
   ) {}
+
+  @Post('repair/derived-records')
+  @RequireScopes('admin')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({ summary: 'Queue repair of derived transaction and receipt records' })
+  @ApiResponse({ status: 202, description: 'Repair job queued' })
+  async repairDerivedRecords(@Body() body: DerivedRecordRepairRequestDto) {
+    const jobId = await this.jobQueueService.enqueue(
+      JobType.DERIVED_RECORD_REPAIR,
+      body,
+    );
+    return { jobId, status: 'queued' };
+  }
 
   /**
    * List jobs with optional filters

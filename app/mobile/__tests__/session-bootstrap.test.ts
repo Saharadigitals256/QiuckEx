@@ -68,7 +68,7 @@ describe('fetchSessionBootstrap', () => {
     expect(result).toEqual(mockResponse);
   });
 
-  it('throws an error on non-ok response', async () => {
+  it('throws an error on non-ok response when degraded mode is disabled', async () => {
     (getWalletSession as jest.Mock).mockResolvedValue(null);
     
     (global.fetch as jest.Mock).mockResolvedValue({
@@ -77,6 +77,43 @@ describe('fetchSessionBootstrap', () => {
       json: async () => ({ message: 'Server error' }),
     });
 
-    await expect(fetchSessionBootstrap(apiUrl)).rejects.toThrow('Server error');
+    await expect(fetchSessionBootstrap(apiUrl, { allowDegraded: false })).rejects.toThrow('Server error');
+  });
+
+  it('falls back to degraded payload on non-ok response when allowDegraded is true', async () => {
+    (getWalletSession as jest.Mock).mockResolvedValue({
+      publicKey: 'GAMOSFOKEYHFDGMXIEFEYBUYK3ZMFYN3PFLOTBRXFGBFGRKBKLQSLGLP',
+      network: 'testnet',
+    });
+
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: async () => ({ message: 'Service Unavailable' }),
+    });
+
+    const result = await fetchSessionBootstrap(apiUrl, {
+      allowDegraded: true,
+      currentEnvironmentId: 'testnet',
+    });
+
+    expect(result.degraded).toBe(true);
+    expect(result.unreadCount).toBe(0);
+    expect(result.accountContext?.publicKey).toBe(
+      'GAMOSFOKEYHFDGMXIEFEYBUYK3ZMFYN3PFLOTBRXFGBFGRKBKLQSLGLP',
+    );
+    expect(result.metadata.environment).toBe('testnet');
+  });
+
+  it('falls back to degraded payload on network fetch exception when allowDegraded is true', async () => {
+    (getWalletSession as jest.Mock).mockResolvedValue(null);
+    (global.fetch as jest.Mock).mockRejectedValue(new Error('Network request failed'));
+
+    const result = await fetchSessionBootstrap(apiUrl, { allowDegraded: true });
+
+    expect(result.degraded).toBe(true);
+    expect(result.accountContext).toBeNull();
+    expect(result.unreadCount).toBe(0);
   });
 });
+

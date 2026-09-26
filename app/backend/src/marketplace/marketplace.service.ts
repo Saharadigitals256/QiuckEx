@@ -1,7 +1,10 @@
 import { Injectable } from '@nestjs/common';
+import { Keypair } from '@stellar/stellar-sdk';
 import { SupabaseService, MarketplaceListing, MarketplaceBid } from '../supabase/supabase.service';
 import { SupabaseUniqueConstraintError } from '../supabase/supabase.errors';
 import { UsernamesService } from '../usernames/usernames.service';
+import { AppConfigService } from '../config';
+import { SupabaseError } from '../supabase/supabase.errors';
 import { MarketplaceError, MarketplaceErrorCode } from './errors';
 import {
   buildMarketplaceStateHints,
@@ -13,9 +16,13 @@ import { MarketplaceListingDetailDto } from './dto/marketplace-listing-detail.dt
 
 @Injectable()
 export class MarketplaceService {
+  private readonly maxActiveListingsPerSeller = 5;
+  private readonly maxPendingBidsPerBidder = 5;
+
   constructor(
     private readonly supabase: SupabaseService,
     private readonly usernames: UsernamesService,
+    private readonly config: AppConfigService,
   ) {}
 
   async listUsername(
@@ -24,6 +31,13 @@ export class MarketplaceService {
     askingPrice: number,
   ): Promise<MarketplaceListing> {
     const normalized = username.trim().toLowerCase();
+
+    if (this.config.marketplaceRestrictedUsernames.includes(normalized)) {
+      throw new MarketplaceError(
+        MarketplaceErrorCode.COMPLIANCE_RESTRICTED,
+        'This username is restricted from marketplace listings',
+      );
+    }
 
     const owned = await this.usernames.listByPublicKey(sellerPublicKey);
     if (!owned.find((u) => u.username === normalized)) {
@@ -41,9 +55,22 @@ export class MarketplaceService {
       );
     }
 
+    if (await this.supabase.countActiveListingsBySeller(sellerPublicKey) >= this.maxActiveListingsPerSeller) {
+      throw new MarketplaceError(
+        MarketplaceErrorCode.LISTING_LIMIT_REACHED,
+        `A wallet may have at most ${this.maxActiveListingsPerSeller} active listings`,
+      );
+    }
+
     try {
       return await this.supabase.createListing(normalized, sellerPublicKey, askingPrice);
     } catch (err) {
+      if (err instanceof SupabaseError && err.message.includes('MARKETPLACE_ACTIVE_LISTING_LIMIT')) {
+        throw new MarketplaceError(
+          MarketplaceErrorCode.LISTING_LIMIT_REACHED,
+          `A wallet may have at most ${this.maxActiveListingsPerSeller} active listings`,
+        );
+      }
       if (err instanceof SupabaseUniqueConstraintError) {
         throw new MarketplaceError(
           MarketplaceErrorCode.ALREADY_LISTED,
@@ -77,7 +104,6 @@ export class MarketplaceService {
     viewerPublicKey?: string | null,
   ): Promise<MarketplaceListingDetailDto> {
     const listing = await this.getListing(listingId);
-
     const bidPage = await this.supabase.getBidsByListingIdPaginated(
       listingId,
       50,
@@ -108,6 +134,10 @@ export class MarketplaceService {
   async cancelListing(listingId: string, sellerPublicKey: string): Promise<void> {
     const listing = await this.getListing(listingId);
 
+    if (listing.status === 'cancelled') {
+      return;
+    }
+
     if (listing.seller_public_key !== sellerPublicKey) {
       throw new MarketplaceError(
         MarketplaceErrorCode.UNAUTHORIZED,
@@ -129,6 +159,8 @@ export class MarketplaceService {
     listingId: string,
     bidderPublicKey: string,
     bidAmount: number,
+    signature: string,
+    signedAt: number,
   ): Promise<MarketplaceBid> {
     const listing = await this.getListing(listingId);
 
@@ -143,6 +175,21 @@ export class MarketplaceService {
       throw new MarketplaceError(
         MarketplaceErrorCode.SELF_BID,
         'Seller cannot bid on their own listing',
+      );
+    }
+
+    if (!Number.isFinite(bidAmount) || bidAmount <= 0) {
+      throw new MarketplaceError(
+        MarketplaceErrorCode.INVALID_PRICE,
+        'Bid amount must be a positive number',
+      );
+    }
+
+    const minimumBid = Number(listing.asking_price) + 1;
+    if (bidAmount < minimumBid) {
+      throw new MarketplaceError(
+        MarketplaceErrorCode.INVALID_PRICE,
+        `Bid amount must be at least ${minimumBid}`,
       );
     }
 

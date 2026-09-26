@@ -26,6 +26,9 @@ function generateSupportText(receipt: ReceiptData): string {
     `Network: ${receipt.network.network.toUpperCase()}`,
     `Ledger: ${receipt.network.ledger}`,
     `Timestamp: ${receipt.network.ledgerCloseTime}`,
+    ...(receipt.verification?.verified
+      ? [`Verification: Native Receipts API Verified (${receipt.verification.status}${receipt.verification.degradedMode ? ' - degraded/offline' : ''})`]
+      : []),
     '',
     '--- Timeline ---',
     ...receipt.timeline.map((event) => 

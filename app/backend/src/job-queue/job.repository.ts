@@ -88,21 +88,35 @@ export class JobRepository {
     payload: TPayload,
     maxAttempts: number,
     scheduledAt: Date = new Date(),
+    idempotencyKey?: string,
   ): Promise<Job<TPayload>> {
+    const jobData = {
+      type,
+      payload: payload as unknown,
+      status: JobStatus.PENDING,
+      attempts: 0,
+      max_attempts: maxAttempts,
+      scheduled_at: scheduledAt.toISOString(),
+      ...(idempotencyKey ? { idempotency_key: idempotencyKey } : {}),
+    };
     const { data, error } = await this.client
       .from('jobs')
-      .insert({
-        type,
-        payload: payload as unknown,
-        status: JobStatus.PENDING,
-        attempts: 0,
-        max_attempts: maxAttempts,
-        scheduled_at: scheduledAt.toISOString(),
-      })
+      .insert(jobData)
       .select()
       .single();
 
     if (error) {
+      if (idempotencyKey && error.code === '23505') {
+        const existing = await this.client
+          .from('jobs')
+          .select('*')
+          .eq('type', type)
+          .eq('idempotency_key', idempotencyKey)
+          .single();
+        if (!existing.error && existing.data) {
+          return this.mapRowToJob<TPayload>(existing.data as JobRow);
+        }
+      }
       this.logger.error(`Failed to create job: ${error.message}`, error);
       throw error;
     }

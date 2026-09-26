@@ -463,6 +463,10 @@ export const envSchema = Joi.object({
     .empty("")
     .default("default-abuse-salt")
     .description("Salt for IP/UA hashing in abuse signals"),
+  MARKETPLACE_RESTRICTED_USERNAMES: Joi.string()
+    .allow("")
+    .default("")
+    .description("Comma-separated usernames blocked from marketplace listings"),
 
   PREVIEW_INACTIVITY_THRESHOLD_MS: Joi.number()
     .integer()

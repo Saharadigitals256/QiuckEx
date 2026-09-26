@@ -36,3 +36,31 @@ export type PushNotificationPayload =
   | TransactionDetailNotificationPayload
   | EscrowDetailNotificationPayload
   | ListingDetailNotificationPayload;
+
+export type PushTokenLifecycleStatus =
+  | "registered"
+  | "rotating"
+  | "revoked"
+  | "unregistered";
+
+export interface PushTokenRecord {
+  pushToken: string;
+  publicKey: string;
+  updatedAt: string;
+  status: PushTokenLifecycleStatus;
+}
+
+export type PushTokenSyncOutcome =
+  | "registered"
+  | "rotated"
+  | "revoked"
+  | "unchanged"
+  | "skipped";
+
+export interface PushTokenSyncResult {
+  success: boolean;
+  outcome: PushTokenSyncOutcome;
+  reason?: string;
+  pushToken?: string;
+}
+

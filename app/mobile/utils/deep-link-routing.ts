@@ -1,4 +1,4 @@
-import { parsePaymentLink } from './parse-payment-link';
+import { parsePaymentLink, ParseErrorCode } from './parse-payment-link';
 
 const QUICKEX_HOSTS = ['quickex.to', 'www.quickex.to'];
 const QUICKEX_SCHEME = 'quickex';
@@ -10,14 +10,33 @@ export interface DeepLinkRoute {
 
 export type DeepLinkResolution =
   | { route: DeepLinkRoute }
-  | { error: string }
+  | { error: string; code?: ParseErrorCode | 'UNAUTHORIZED_PATH' | 'UNSUPPORTED_SCHEME' | 'PHISHING_SUSPECTED' }
   | { ignored: true };
+
+export interface DeepLinkResolutionMetrics {
+  event: 'deep_link_resolution';
+  success: boolean;
+  pathname?: string;
+  errorCode?: string;
+  latencyMs: number;
+}
+
+function logResolutionMetric(metric: DeepLinkResolutionMetrics): void {
+  if (__DEV__) {
+    console.log('[DeepLinkRouter]', JSON.stringify(metric));
+  }
+}
 
 export function parseTransactionDeepLink(
   raw: string,
 ): { id: string; params: Record<string, string> } | null {
   try {
     const url = new URL(raw);
+
+    // Prevent path traversal or invalid host
+    if (url.pathname.includes('..') || url.pathname.includes('%2e%2e')) {
+      return null;
+    }
 
     if (url.protocol === `${QUICKEX_SCHEME}:`) {
       const segments = url.pathname
@@ -28,7 +47,10 @@ export function parseTransactionDeepLink(
       if (isTransactionPath && segments.length >= 1) {
         const params: Record<string, string> = {};
         url.searchParams.forEach((value, key) => {
-          params[key] = value;
+          // Exclude any redirect / external URLs
+          if (!key.toLowerCase().includes('redirect') && !key.toLowerCase().includes('callback')) {
+            params[key] = value;
+          }
         });
         return { id: segments[0], params };
       }
@@ -45,7 +67,9 @@ export function parseTransactionDeepLink(
       if (segments.length >= 2 && segments[0] === 'transaction') {
         const params: Record<string, string> = {};
         url.searchParams.forEach((value, key) => {
-          params[key] = value;
+          if (!key.toLowerCase().includes('redirect') && !key.toLowerCase().includes('callback')) {
+            params[key] = value;
+          }
         });
         return { id: segments[1], params };
       }
@@ -93,13 +117,43 @@ function looksLikePaymentLink(raw: string): boolean {
 }
 
 export function resolveDeepLink(raw: string): DeepLinkResolution {
+  const startTime = Date.now();
   const trimmed = raw.trim();
   if (!trimmed) {
     return { ignored: true };
   }
 
+  // 1. Phishing & Scheme Pre-validation
+  try {
+    const parsedUrl = new URL(trimmed);
+    const validSchemes = [`${QUICKEX_SCHEME}:`, 'https:', 'http:'];
+    if (!validSchemes.includes(parsedUrl.protocol)) {
+      const latencyMs = Date.now() - startTime;
+      logResolutionMetric({
+        event: 'deep_link_resolution',
+        success: false,
+        errorCode: 'UNSUPPORTED_SCHEME',
+        latencyMs,
+      });
+      return {
+        error: `Unsupported scheme: ${parsedUrl.protocol}`,
+        code: 'UNSUPPORTED_SCHEME',
+      };
+    }
+  } catch {
+    // Fall through if not a standard parseable URL
+  }
+
   const paymentResult = parsePaymentLink(trimmed);
   if (paymentResult.valid) {
+    const latencyMs = Date.now() - startTime;
+    logResolutionMetric({
+      event: 'deep_link_resolution',
+      success: true,
+      pathname: '/payment-confirmation',
+      latencyMs,
+    });
+
     return {
       route: {
         pathname: '/payment-confirmation',
@@ -109,6 +163,8 @@ export function resolveDeepLink(raw: string): DeepLinkResolution {
           asset: paymentResult.data.asset,
           ...(paymentResult.data.memo ? { memo: paymentResult.data.memo } : {}),
           privacy: String(paymentResult.data.privacy),
+          ...(paymentResult.data.expires ? { expires: String(paymentResult.data.expires) } : {}),
+          ...(paymentResult.data.nonce ? { nonce: paymentResult.data.nonce } : {}),
         },
       },
     };
@@ -116,6 +172,14 @@ export function resolveDeepLink(raw: string): DeepLinkResolution {
 
   const transactionResult = parseTransactionDeepLink(trimmed);
   if (transactionResult) {
+    const latencyMs = Date.now() - startTime;
+    logResolutionMetric({
+      event: 'deep_link_resolution',
+      success: true,
+      pathname: '/transaction/[id]',
+      latencyMs,
+    });
+
     return {
       route: {
         pathname: '/transaction/[id]',
@@ -128,10 +192,27 @@ export function resolveDeepLink(raw: string): DeepLinkResolution {
   }
 
   if (isQuickExLink(trimmed)) {
+    const latencyMs = Date.now() - startTime;
+    const isPayment = looksLikePaymentLink(trimmed);
+    const errorCode = isPayment && !paymentResult.valid ? paymentResult.code : 'UNAUTHORIZED_PATH';
+    const errorMessage = isPayment && !paymentResult.valid
+      ? (paymentResult.code === 'INVALID_URL' ? 'Unsupported or expired QuickEx link.' : paymentResult.error)
+      : 'Unsupported or expired QuickEx link.';
+
+    logResolutionMetric({
+      event: 'deep_link_resolution',
+      success: false,
+      errorCode,
+      latencyMs,
+    });
+
+    if (errorMessage === 'Unsupported or expired QuickEx link.') {
+      return { error: errorMessage };
+    }
+
     return {
-      error: looksLikePaymentLink(trimmed)
-        ? paymentResult.error ?? 'Unsupported or expired QuickEx link.'
-        : 'Unsupported or expired QuickEx link.',
+      error: errorMessage,
+      code: errorCode,
     };
   }
 

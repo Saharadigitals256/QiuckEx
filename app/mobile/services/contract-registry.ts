@@ -38,6 +38,28 @@ export interface ContractRegistrySyncResult {
 interface ContractRegistryCache {
   timestamp: number;
   data: ContractRegistry;
+  etag?: string;
+}
+
+function readCachedRegistry(value: string | null): ContractRegistryCache | null {
+  if (!value) return null;
+
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      typeof (parsed as ContractRegistryCache).timestamp === 'number' &&
+      typeof (parsed as ContractRegistryCache).data === 'object' &&
+      (parsed as ContractRegistryCache).data !== null
+    ) {
+      return parsed as ContractRegistryCache;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
 }
 
 function isContractRegistryEnvelope(value: unknown): value is ContractRegistryEnvelope {
@@ -51,10 +73,43 @@ function isContractRegistryEnvelope(value: unknown): value is ContractRegistryEn
 
 export const ContractRegistryService = {
   async sync(backendUrl: string): Promise<ContractRegistrySyncResult> {
+    let cached: ContractRegistryCache | null = null;
     try {
-      const response = await fetch(`${backendUrl}/contracts/registry`);
+      cached = readCachedRegistry(await AsyncStorage.getItem(CACHE_KEY));
+    } catch {
+      // Registry fetches should still work when local storage is unavailable.
+    }
+
+    try {
+      const registryUrl = `${backendUrl.replace(/\/+$/, '')}/contracts/registry`;
+      const response = await fetch(registryUrl, {
+        headers: cached?.etag ? { 'If-None-Match': cached.etag } : {},
+      });
       if (response.status === 404) {
         throw new Error('Contract registry route not found on backend');
+      }
+      if (response.status === 304) {
+        if (!cached) {
+          throw new Error('Registry returned not modified without a cached registry');
+        }
+
+        const timestamp = Date.now();
+        const etag = response.headers?.get?.('ETag') ?? cached.etag;
+        try {
+          await AsyncStorage.setItem(CACHE_KEY, JSON.stringify({
+            timestamp,
+            data: cached.data,
+            ...(etag ? { etag } : {}),
+          }));
+        } catch {
+          // A valid network result should not fail because cache storage is unavailable.
+        }
+        return {
+          registry: cached.data,
+          fetchedAt: timestamp,
+          isStale: false,
+          source: 'network',
+        };
       }
       if (!response.ok) {
         throw new Error(`Failed to fetch registry (status ${response.status})`);
@@ -67,10 +122,16 @@ export const ContractRegistryService = {
 
       const data = body.data;
       const timestamp = Date.now();
-      await AsyncStorage.setItem(CACHE_KEY, JSON.stringify({
-        timestamp,
-        data
-      }));
+      const etag = response.headers?.get?.('ETag') ?? body.etag;
+      try {
+        await AsyncStorage.setItem(CACHE_KEY, JSON.stringify({
+          timestamp,
+          data,
+          ...(etag ? { etag } : {}),
+        }));
+      } catch {
+        // Keep the fresh registry usable even if local persistence fails.
+      }
       return {
         registry: data,
         fetchedAt: timestamp,
@@ -78,14 +139,12 @@ export const ContractRegistryService = {
         source: 'network',
       };
     } catch (error) {
-      const cached = await AsyncStorage.getItem(CACHE_KEY);
       if (cached) {
-        const parsed = JSON.parse(cached) as ContractRegistryCache;
         // Serve stale cache if offline or backend returned bad data
         return {
-          registry: parsed.data,
-          fetchedAt: parsed.timestamp,
-          isStale: Date.now() - parsed.timestamp > REGISTRY_CACHE_TTL_MS,
+          registry: cached.data,
+          fetchedAt: cached.timestamp,
+          isStale: Date.now() - cached.timestamp > REGISTRY_CACHE_TTL_MS,
           source: 'cache',
         };
       }

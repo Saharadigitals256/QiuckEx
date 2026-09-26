@@ -1,0 +1,132 @@
+# Contributor label set for QuickEx.
+#
+# This file is the single source of truth for repository labels. It is applied
+# idempotently by `scripts/sync-labels.sh` (run locally) and by
+# `.github/workflows/sync-labels.yml` (run manually from the Actions tab, or on
+# a schedule). Applying it is safe to repeat: existing labels are updated in
+# place, and only labels listed here are created.
+#
+# Naming rules
+#   - Area labels are lowercase and match a top-level path or domain.
+#   - Priority labels are P0..P3; P0 is the highest.
+#   - Status labels are for issues only and are mutually exclusive:
+#     `status:needs-triage`, `status:accepted`, `status:blocked`, `status:done`.
+#   - Workflow labels describe the surrounding process:
+#     `good first issue`, `help wanted`, `breaking-change`, `security`.
+#
+# The GitHub default labels already present on the repository (`bug`,
+# `enhancement`, `documentation`, `question`, `duplicate`, `invalid`, `wontfix`,
+# `good first issue`, `help wanted`) are reused rather than re-declared under a
+# `type:` prefix, so issues that already carry them keep their colour and
+# history. `type:*` is reserved for kinds GitHub has no default for.
+- name: bug
+  color: d73a4a
+  description: Something is not working as documented. See docs/CAPABILITY-MAP.md for what is actually Live.
+- name: type:security
+  color: b60205
+  description: Security or self-custody relevant. Treated as priority by default.
+- name: type:performance
+  color: f9d0c4
+  description: Latency, throughput, or resource-usage work.
+- name: type:tech-debt
+  color: c5def5
+  description: Refactor, cleanup, or removal of dead code.
+- name: type:mocked-to-live
+  color: 5319e7
+  description: Replaces a Mocked or Partial row in docs/CAPABILITY-MAP.md with a Live implementation.
+
+- name: area:frontend
+  color: 1d76db
+  description: app/frontend - Next.js web app.
+- name: area:backend
+  color: 0e8a16
+  description: app/backend - NestJS API.
+- name: area:mobile
+  color: 5319e7
+  description: app/mobile - React Native / Expo app.
+- name: area:contract
+  color: b60205
+  description: app/contract - Soroban Rust contracts.
+- name: area:docs
+  color: 0075ca
+  description: Documentation and governance only.
+- name: area:ci
+  color: 1d76db
+  description: Pipelines, scripts, and repository automation.
+- name: area:infra
+  color: bfd4f2
+  description: Hosting, environments, and deployment configuration.
+- name: area:shared
+  color: c2e0c6
+  description: Cross-cutting: touches more than one of the four surfaces.
+
+- name: network:testnet
+  color: 0e8a16
+  description: Exercised against Stellar testnet. Safe to merge and deploy.
+- name: network:mainnet
+  color: b60205
+  description: Touches mainnet. Requires a post-audit rollout and is feature-gated until then.
+- name: custody:sensitive
+  color: b60205
+  description: Affects key handling, signing, settlement, or the INV-01..INV-10 invariants in docs/INVARIANTS.md.
+
+- name: needs:breaking-change
+  color: d93f0b
+  description: Breaks the documented backend/client contract in docs/BACKEND-CLIENT-CONTRACT-MAP.md.
+- name: needs:migration
+  color: d93f0b
+  description: Requires a database, schema, or config migration. Note the rollback path in the PR.
+- name: needs:design
+  color: fbca04
+  description: Architectural. Needs an ADR in docs/adr/ before or alongside implementation.
+
+- name: status:needs-triage
+  color: c2e0c6
+  description: Not yet reviewed by a maintainer.
+- name: status:accepted
+  color: 0e8a16
+  description: Triaged and accepted. Safe to pick up.
+- name: status:blocked
+  color: d93f0b
+  description: Accepted but waiting on an external dependency or decision.
+- name: status:done
+  color: cfd3d7
+  description: Shipped or closed as resolved.
+
+- name: P0
+  color: b60205
+  description: Critical - fund loss, self-custody breach, or production outage. Drop everything.
+- name: P1
+  color: d93f0b
+  description: High - a Live flow is broken or a financial invariant is at risk.
+- name: P2
+  color: fbca04
+  description: Normal - a broken or missing non-critical capability.
+- name: P3
+  color: cfd3d7
+  description: Low - polish, docs, or speculative improvement.
+
+- name: good first issue
+  color: 7057ff
+  description: Well-scoped, self-contained, and safe for a newcomer. Keep these narrow.
+- name: help wanted
+  color: 008672
+  description: Maintainers do not have bandwidth for this right now.
+- name: breaking-change
+  color: b60205
+  description: Incompatible change to a public API or CLI.
+- name: security
+  color: b60205
+  description: Security-sensitive. Do not disclose details in public issue threads.
+- name: duplicate
+  color: cfd3d7
+  description: Already tracked elsewhere. Link the canonical issue.
+- name: invalid
+  color: e4e669
+  description: Not actionable as filed.
+- name: wontfix
+  color: ffffff
+  description: Reviewed and declined. Explain why in a comment.
+- name: question
+  color: d876e3
+  description: Request for information rather than a defect or feature.

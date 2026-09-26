@@ -77,6 +77,13 @@ interface ReceiptData {
   network: NetworkMetadata;
   timeline: TimelineEvent[];
   supportBundleReference?: string;
+  verification?: {
+    verified: boolean;
+    computedHash?: string;
+    verifiedAt: string;
+    degradedMode?: boolean;
+    status: 'valid' | 'invalid' | 'unverified';
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -505,12 +512,20 @@ function MetadataSection({
   contract,
   network,
   supportBundleReference,
+  verification,
 }: {
   receiptId: string;
   receiptMetadata: ReceiptMetadata;
   contract: ContractMetadata;
   network: NetworkMetadata;
   supportBundleReference?: string;
+  verification?: {
+    verified: boolean;
+    computedHash?: string;
+    verifiedAt: string;
+    degradedMode?: boolean;
+    status: 'valid' | 'invalid' | 'unverified';
+  };
 }) {
   const [expanded, setExpanded] = React.useState(false);
   const { color, tokens } = useTheme();
@@ -645,6 +660,31 @@ function MetadataSection({
                   <Text>⬆️</Text>
                 </TouchableOpacity>
               </View>
+            </View>
+          </View>
+        )}
+
+        {verification && (
+          <View style={metaStyles.hashRow}>
+            <Text style={[metaStyles.hashLabel, { color: color(tokens.textMuted) }]}>
+              Verification
+            </Text>
+            <View style={metaStyles.hashValueRow}>
+              <Text
+                style={[
+                  metaStyles.hashValue,
+                  {
+                    color: verification.verified ? '#10B981' : '#EF4444',
+                    fontWeight: '600',
+                  },
+                ]}
+              >
+                {verification.verified
+                  ? verification.degradedMode
+                    ? 'Verified (Offline Degraded)'
+                    : 'Verified by Receipts API ✓'
+                  : 'Verification Failed ✕'}
+              </Text>
             </View>
           </View>
         )}
@@ -1064,6 +1104,7 @@ export function ReceiptScreen({ receipt, onBack }: { receipt: ReceiptData; onBac
           contract={receipt.contract}
           network={receipt.network}
           supportBundleReference={receipt.supportBundleReference}
+          verification={receipt.verification}
         />
 
         {/* QR Code */}

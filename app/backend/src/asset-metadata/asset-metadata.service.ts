@@ -14,6 +14,7 @@ import {
   AssetListResponseDto,
 } from './dto/asset-metadata.dto';
 import { SupabaseService, VerifiedAssetDbRecord } from '../supabase/supabase.service';
+import { AssetListingService } from '../asset-listing/asset-listing.service';
 
 @Injectable()
 export class AssetMetadataService {
@@ -47,6 +48,7 @@ export class AssetMetadataService {
     private readonly tomlFetcher: TomlFetcherService,
     private readonly horizonService: HorizonService,
     private readonly supabaseService: SupabaseService,
+    private readonly assetListingService: AssetListingService,
   ) {}
 
   private mapDbRecordToRecord(dbRecord: VerifiedAssetDbRecord): VerifiedAssetRecord {
@@ -107,6 +109,17 @@ export class AssetMetadataService {
       } else {
         records = fallbackList as VerifiedAssetRecord[];
       }
+    }
+
+    // Asset listing policy enforcement (issue #306): a delisted/suspended asset
+    // must never be offered to clients. When the `assets.listing_policy` flag is
+    // off this is a no-op (pre-policy behaviour on networks that are not gated in).
+    const listingResult = await this.assetListingService.filterServed(records);
+    records = listingResult.records;
+    if (listingResult.degraded) {
+      this.logger.warn(
+        'Serving the last known good asset list: asset listing registry unavailable (degraded mode).',
+      );
     }
 
     const assets = await Promise.all(

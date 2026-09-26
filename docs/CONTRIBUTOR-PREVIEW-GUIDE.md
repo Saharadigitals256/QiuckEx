@@ -16,6 +16,11 @@ Preview environments are isolated, ephemeral deployments that mirror a contribut
 
 Previews enable contributors, reviewers, and QA to validate changes against a live, network-isolated stack without affecting staging or production.
 
+> For the technical contract — reproducible scope ids, TTL bounds, stable error
+> codes, recovery behavior, and the testnet-only gate — see
+> [STAGING-PREVIEWS.md](./STAGING-PREVIEWS.md). This guide covers the contributor
+> workflow; that document covers the mechanism.
+
 ### When Previews Are Created
 
 | Trigger | What Happens |

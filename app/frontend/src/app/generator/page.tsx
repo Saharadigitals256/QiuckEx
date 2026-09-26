@@ -34,10 +34,13 @@ import {
   readDraftLinks,
   saveDraftLink,
   validateAmountInput,
+  validatePaymentLinkPreview,
+  validateMemoInput,
 } from '@/lib/linkGenerator';
+import { notifyLinkCreated } from '@/lib/cacheInvalidation';
 
 type ValidationErrors = Partial<
-  Record<"amount" | "asset" | "destination", string>
+  Record<"amount" | "asset" | "destination" | "memo", string>
 >;
 
 type VerifiedAsset = {
@@ -384,9 +387,17 @@ export default function Generator() {
 
   const validate = () => {
     const newErrors: ValidationErrors = {};
-    const amountCheck = validateAmountInput(form.amount);
-    if (!amountCheck.valid) {
-      newErrors.amount = amountCheck.message;
+    const previewValidation = validatePaymentLinkPreview({
+      amount: form.amount,
+      asset: recipientAssetCode,
+      destination: form.destination,
+      memo: form.memo,
+    });
+    if (!previewValidation.valid) {
+      if (previewValidation.errors.amount) newErrors.amount = previewValidation.errors.amount;
+      if (previewValidation.errors.asset) newErrors.asset = previewValidation.errors.asset;
+      if (previewValidation.errors.destination) newErrors.destination = previewValidation.errors.destination;
+      if (previewValidation.errors.memo) newErrors.memo = previewValidation.errors.memo;
     }
     if (!form.destination) {
       newErrors.destination = t('destinationRequired');
@@ -403,6 +414,15 @@ export default function Generator() {
     setErrors((current) => ({
       ...current,
       amount: amountCheck.valid ? undefined : amountCheck.message,
+    }));
+  };
+
+  const handleMemoChange = (value: string) => {
+    setForm((current) => ({ ...current, memo: value.slice(0, MAX_MEMO_LENGTH) }));
+    const memoCheck = validateMemoInput(value);
+    setErrors((current) => ({
+      ...current,
+      memo: memoCheck.valid ? undefined : memoCheck.message,
     }));
   };
 
@@ -466,6 +486,7 @@ export default function Generator() {
 
     const stored = saveDraftLink(nextDraft, window.localStorage);
     setDraftLinks(stored);
+    notifyLinkCreated({ linkId: nextDraft.id, username: form.destination });
   };
 
   const handleShareGeneratedLink = async () => {
@@ -844,6 +865,7 @@ export default function Generator() {
         window.clearInterval(progressTimer);
         setBulkProgress(100);
         setBulkResult(payload);
+        notifyLinkCreated();
       } catch (generationError) {
         window.clearInterval(progressTimer);
         setBulkProgress(0);
@@ -1111,9 +1133,14 @@ export default function Generator() {
                   maxLength={MAX_MEMO_LENGTH}
                   placeholder={t('memoPlaceholder')}
                   value={form.memo}
-                  onChange={(e) => setForm({ ...form, memo: e.target.value.slice(0, MAX_MEMO_LENGTH) })}
+                  onChange={(e) => handleMemoChange(e.target.value)}
                   className={`w-full bg-card/30 border border-border-strong rounded-3xl p-5 font-bold mt-2 placeholder:text-subtle ${FOCUS_RING_CLASS}`}
                 />
+                {errors.memo && (
+                  <p role="alert" className="text-red-400 text-xs mt-1">
+                    {errors.memo}
+                  </p>
+                )}
                 <div className="mt-2 flex justify-between text-[11px] uppercase tracking-[0.2em] text-muted">
                   <span>Memo</span>
                   <span className={memoRemaining < 0 ? 'text-red-400' : ''}>{memoCharacterCount}/{MAX_MEMO_LENGTH}</span>

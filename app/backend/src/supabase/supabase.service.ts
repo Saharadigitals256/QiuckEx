@@ -28,6 +28,18 @@ export interface SearchProfileResult {
   similarity_score?: number;
 }
 
+export interface EditableProfileRecord {
+  username: string;
+  public_key: string;
+  profile_primary_color: string;
+  avatar_url: string | null;
+  bio: string;
+  twitter_handle: string;
+  discord_handle: string;
+  github_handle: string;
+  profile_version: number;
+}
+
 export interface TrendingCreatorResult extends SearchProfileResult {
   transaction_volume: number;
   transaction_count: number;
@@ -185,6 +197,46 @@ export class SupabaseService {
       .order("created_at", { ascending: true });
     if (error) this.handleError(error);
     return data ?? [];
+  }
+
+  async getProfileSettings(publicKey: string): Promise<EditableProfileRecord[]> {
+    const { data, error } = await this.client
+      .from("usernames")
+      .select("username, public_key, profile_primary_color, avatar_url, bio, twitter_handle, discord_handle, github_handle, profile_version")
+      .eq("public_key", publicKey)
+      .order("created_at", { ascending: true });
+    if (error) this.handleError(error);
+    return (data ?? []) as EditableProfileRecord[];
+  }
+
+  async updateProfileSettings(
+    publicKey: string,
+    username: string,
+    expectedVersion: number,
+    profile: Omit<EditableProfileRecord, "username" | "public_key" | "profile_version">,
+  ): Promise<{ status: "updated"; profile: EditableProfileRecord } | { status: "conflict" | "not_found" }> {
+    const { data, error } = await this.client
+      .from("usernames")
+      .update({ ...profile, profile_version: expectedVersion + 1 })
+      .eq("username", username)
+      .eq("public_key", publicKey)
+      .eq("profile_version", expectedVersion)
+      .select("username, public_key, profile_primary_color, avatar_url, bio, twitter_handle, discord_handle, github_handle, profile_version")
+      .maybeSingle();
+
+    if (error) this.handleError(error);
+    if (data) {
+      return { status: "updated", profile: data as EditableProfileRecord };
+    }
+
+    const { data: current, error: lookupError } = await this.client
+      .from("usernames")
+      .select("username")
+      .eq("username", username)
+      .eq("public_key", publicKey)
+      .maybeSingle();
+    if (lookupError) this.handleError(lookupError);
+    return current ? { status: "conflict" } : { status: "not_found" };
   }
 
   async getUsername(username: string): Promise<SearchProfileResult | null> {
@@ -713,6 +765,30 @@ export class SupabaseService {
     return data as MarketplaceListing;
   }
 
+  async countActiveListingsBySeller(sellerPublicKey: string): Promise<number> {
+    const { count, error } = await this.client
+      .from("username_marketplace")
+      .select("id", { count: "exact", head: true })
+      .eq("seller_public_key", sellerPublicKey)
+      .eq("status", "active");
+    if (error) this.handleError(error);
+    return count ?? 0;
+  }
+
+  async countPendingBidsByBidder(
+    listingId: string,
+    bidderPublicKey: string,
+  ): Promise<number> {
+    const { count, error } = await this.client
+      .from("username_bids")
+      .select("id", { count: "exact", head: true })
+      .eq("listing_id", listingId)
+      .eq("bidder_public_key", bidderPublicKey)
+      .eq("status", "pending");
+    if (error) this.handleError(error);
+    return count ?? 0;
+  }
+
   async searchActiveListings(
     query: string,
     limit: number = 10,
@@ -888,6 +964,8 @@ export class SupabaseService {
     listingId: string,
     bidderPublicKey: string,
     bidAmount: number,
+    signature: string,
+    signedAt: number,
   ): Promise<MarketplaceBid> {
     const { data, error } = await this.client
       .from("username_bids")
@@ -895,6 +973,8 @@ export class SupabaseService {
         listing_id: listingId,
         bidder_public_key: bidderPublicKey,
         bid_amount: bidAmount,
+        signature,
+        signed_at: new Date(signedAt).toISOString(),
       })
       .select()
       .single();

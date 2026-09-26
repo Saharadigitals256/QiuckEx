@@ -20,7 +20,9 @@ describe("SorobanEventIndexerService - Dual-Read", () => {
 
   beforeEach(async () => {
     const mockCheckpointRepo = {
+      getCheckpoint: jest.fn().mockResolvedValue(null),
       getLastLedger: jest.fn().mockResolvedValue(null),
+      saveCheckpoint: jest.fn().mockResolvedValue(undefined),
       saveLastLedger: jest.fn().mockResolvedValue(undefined),
     };
 
@@ -165,7 +167,10 @@ describe("SorobanEventIndexerService - Dual-Read", () => {
         effectiveLedger: 50_000_000,
       };
 
-      checkpointRepo.getLastLedger.mockResolvedValue(5000);
+      checkpointRepo.getCheckpoint.mockResolvedValue({
+        lastLedger: 5000,
+        pagingToken: null,
+      });
 
       const result = await service.indexLedgerRange(
         currentId,
@@ -185,9 +190,10 @@ describe("SorobanEventIndexerService - Dual-Read", () => {
         effectiveLedger: 50_000_000,
       };
 
-      checkpointRepo.getLastLedger
-        .mockResolvedValueOnce(1500)
-        .mockResolvedValueOnce(null);
+      checkpointRepo.getCheckpoint.mockResolvedValue({
+        lastLedger: 1500,
+        pagingToken: null,
+      });
 
       jest
         .spyOn(service as any, "fetchPage")
@@ -209,7 +215,10 @@ describe("SorobanEventIndexerService - Dual-Read", () => {
         effectiveLedger: 50_000_000,
       };
 
-      checkpointRepo.getLastLedger.mockResolvedValue(1500);
+      checkpointRepo.getCheckpoint.mockResolvedValue({
+        lastLedger: 1500,
+        pagingToken: null,
+      });
 
       jest
         .spyOn(service as any, "fetchPage")

@@ -71,6 +71,10 @@ export function ActivePaymentState({
   const [simulatorOutcome, setSimulatorOutcome] = useState<SimulatorOutcome>("success");
   const [showDevPanel, setShowDevPanel] = useState(false);
 
+  // Accessible screen reader announcements
+  const [announcement, setAnnouncement] = useState<string>("");
+  const [alertAnnouncement, setAlertAnnouncement] = useState<string>("");
+
   const selectedSwapOption = status.swapOptions?.find(
     (option) => option.sourceAsset === selectedSourceAsset,
   );
@@ -101,6 +105,7 @@ export function ActivePaymentState({
   const runPipeline = async (startStep: "simulate" | "sign" | "submit") => {
     setErrorType(null);
     setErrorMessage(null);
+    setAlertAnnouncement("");
     onPaymentInitiated();
 
     if (startStep === "simulate") {
@@ -109,6 +114,7 @@ export function ActivePaymentState({
       setSignStatus("pending");
       setSubmitStatus("pending");
       setLogs([]);
+      setAnnouncement("Starting payment pipeline. Validating and simulating transaction...");
       addLog("Starting transaction pipeline execution...");
       addLog("Validating recipient public key and destination address...");
 
@@ -119,11 +125,13 @@ export function ActivePaymentState({
         setErrorType("contract");
         const err = "Contract Error: Transaction simulation failed. The smart contract returned an error (e.g. insufficient funds, expired path, or invalid preconditions).";
         setErrorMessage(err);
+        setAlertAnnouncement("Transaction simulation failed: insufficient funds or invalid preconditions.");
         addLog("ERROR: Transaction simulation failed (op_underfunded). Recipient balance is insufficient or swap path is invalid.");
         return;
       }
 
       setSimulateStatus("success");
+      setAnnouncement("Simulation successful. Requesting signature in your Stellar wallet...");
       addLog("Simulation successful: gas limit checked, swap path verified.");
       startStep = "sign";
     }
@@ -131,6 +139,7 @@ export function ActivePaymentState({
     if (startStep === "sign") {
       setTxStep("sign");
       setSignStatus("processing");
+      setAnnouncement("Requesting transaction signature from Stellar wallet (Freighter/Lobstr)...");
       addLog("Requesting transaction signature from Stellar wallet (Freighter/Lobstr)...");
 
       await new Promise((r) => setTimeout(r, 2000));
@@ -140,6 +149,7 @@ export function ActivePaymentState({
         setErrorType("rejection");
         const err = "User Rejection: Signature request denied. The transaction was rejected in your wallet.";
         setErrorMessage(err);
+        setAlertAnnouncement("Signature request denied in wallet. No funds were transferred.");
         addLog("ERROR: User rejected signature request in wallet extension.");
         return;
       }
@@ -148,6 +158,7 @@ export function ActivePaymentState({
       const mockXdr = "AAAAA" + Math.random().toString(36).substring(7).toUpperCase() + "xdrSignedPayload314159265358979323846264";
       setSignedPayload(mockXdr);
       setSignStatus("success");
+      setAnnouncement("Transaction signed successfully. Broadcasting to the network...");
       addLog(`Transaction signed. Signed XDR envelope generated (${mockXdr.substring(0, 16)}...).`);
       startStep = "submit";
     }
@@ -155,6 +166,7 @@ export function ActivePaymentState({
     if (startStep === "submit") {
       setTxStep("submit");
       setSubmitStatus("processing");
+      setAnnouncement("Broadcasting transaction payload to Stellar Horizon network...");
       if (signedPayload) {
         addLog(`Idempotency active: broadcasting cached signed XDR (${signedPayload.substring(0, 16)}...)`);
       } else {
@@ -168,6 +180,7 @@ export function ActivePaymentState({
         setErrorType("network");
         const err = "Network Error: Broadcast timed out or Horizon node was unreachable. You can safely retry without resigning.";
         setErrorMessage(err);
+        setAlertAnnouncement("Network error during broadcast. Payload is cached and safe to retry without re-signing.");
         addLog("ERROR: Connection timeout during broadcast to Horizon node.");
         addLog("SAFE TO RETRY: The signed transaction envelope (XDR) is cached. Retrying will not duplicate payment.");
         return;
@@ -175,6 +188,7 @@ export function ActivePaymentState({
 
       setSubmitStatus("success");
       setTxStep("completed");
+      setAnnouncement("Transaction confirmed on the Stellar ledger! Payment completed.");
       addLog("Transaction confirmed in ledger! Fetching tx hash...");
 
       // Complete payment
@@ -741,6 +755,14 @@ export function ActivePaymentState({
         <p role="status" aria-live="polite" className="sr-only">
           {copyStatus ?? ""}
         </p>
+
+        {/* Live region announcements for wallet connection, simulation, signing, and submission */}
+        <div className="sr-only" aria-live="polite" aria-atomic="true" role="status">
+          {announcement}
+        </div>
+        <div className="sr-only" aria-live="assertive" aria-atomic="true" role="alert">
+          {alertAnnouncement}
+        </div>
       </div>
 
       <div className="bg-brand-soft border border-blue-400/30 rounded-xl p-4">

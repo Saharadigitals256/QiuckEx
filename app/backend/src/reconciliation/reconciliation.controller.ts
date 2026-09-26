@@ -15,6 +15,7 @@ import {
 import { ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 
 import { ReconciliationWorkerService } from './reconciliation-worker.service';
+import { ReconciliationService } from './reconciliation.service';
 import { BackfillService, BackfillConfig, BackfillProgress, BackfillResult } from './backfill.service';
 import { AutoMatchService } from './auto-match.service';
 import { UnmatchedQueueRepository } from './unmatched-queue.repository';
@@ -22,6 +23,9 @@ import { ReconciliationReport } from './types/reconciliation.types';
 import type { IncomingTransaction, MatchResult } from './types/auto-match.types';
 import { NetworkSafetyGuard } from '../feature-flags/network-safety.guard';
 import { RequiresFlag } from '../feature-flags/requires-flag.decorator';
+import { ApiKeyGuard } from '../auth/guards/api-key.guard';
+import { RequireScopes } from '../auth/decorators/require-scopes.decorator';
+import { IndexerLagService } from '../indexer-lag/indexer-lag.service';
 
 /**
  * Admin endpoints for the reconciliation worker and auto-match engine.
@@ -29,12 +33,16 @@ import { RequiresFlag } from '../feature-flags/requires-flag.decorator';
  */
 @ApiTags('reconciliation')
 @Controller('reconciliation')
+@UseGuards(ApiKeyGuard)
+@RequireScopes('admin')
 export class ReconciliationController {
   constructor(
     private readonly worker: ReconciliationWorkerService,
     private readonly backfill: BackfillService,
     private readonly autoMatch: AutoMatchService,
     private readonly unmatchedQueue: UnmatchedQueueRepository,
+    private readonly indexerLag: IndexerLagService,
+    private readonly reconciliation: ReconciliationService,
   ) {}
 
   // ─── Existing reconciliation endpoints ──────────────────────────────────────
@@ -46,6 +54,28 @@ export class ReconciliationController {
     return {
       running: this.worker.running,
       lastReport: this.worker.getLastReport(),
+    };
+  }
+
+  @Get('dashboard')
+  @ApiOperation({ summary: 'Return operator indexer and reconciliation health' })
+  @ApiResponse({ status: 200, description: 'Indexer lag and latest reconciliation divergence' })
+  async getOperatorDashboard() {
+    const report = await this.reconciliation.getLatestReport();
+
+    return {
+      generatedAt: new Date().toISOString(),
+      indexer: this.indexerLag.getStatus(),
+      reconciliation: {
+        running: this.worker.running,
+        lastRunAt: report?.completedAt ?? null,
+        runId: report?.runId ?? null,
+        divergenceCount:
+          report?.metrics?.total_divergences ?? report?.divergences?.length ?? null,
+        divergenceRate: report?.divergence_rate ?? null,
+        alert: report?.alert ?? null,
+        divergences: report?.divergences ?? [],
+      },
     };
   }
 

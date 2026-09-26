@@ -1,5 +1,6 @@
 {
   "$schema": "https://turbo.build/schema.json",
+  "ui": "stream",
   "tasks": {
     "build": {
       "dependsOn": [
@@ -8,7 +9,8 @@
       "outputs": [
         "dist/**",
         ".next/**",
-        "!.next/cache/**"
+        "!.next/cache/**",
+        "build/**"
       ]
     },
     "dev": {
@@ -18,22 +20,28 @@
     "lint": {
       "dependsOn": [
         "^lint"
-      ]
+      ],
+      "outputs": []
     },
     "type-check": {
       "dependsOn": [
         "^type-check"
-      ]
+      ],
+      "outputs": []
     },
     "test": {
       "dependsOn": [
         "^build"
+      ],
+      "outputs": [
+        "coverage/**"
       ]
     },
     "test:e2e": {
       "dependsOn": [
         "build"
-      ]
+      ],
+      "outputs": []
     }
   }
 }

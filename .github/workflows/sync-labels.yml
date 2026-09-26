@@ -1,0 +1,83 @@
+name: Sync Labels
+
+# Applies .github/labels.yml to the repository. Manual by default; the schedule
+# is a safety net for drift introduced from the GitHub UI. Applying the file is
+# idempotent, so a scheduled run that finds no drift is a no-op.
+on:
+  workflow_dispatch:
+    inputs:
+      prune:
+        description: Also delete labels that are not in .github/labels.yml
+        type: boolean
+        default: false
+      check:
+        description: Report drift only, make no changes
+        type: boolean
+        default: false
+  schedule:
+    # 03:17 UTC daily. Off the hour to avoid the Actions scheduling spike.
+    - cron: "17 3 * * *"
+  push:
+    branches: [main]
+    paths:
+      - ".github/labels.yml"
+      - "scripts/sync-labels.sh"
+      - ".github/workflows/sync-labels.yml"
+
+permissions:
+  issues: write
+  contents: read
+
+concurrency:
+  group: sync-labels
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Apply label definitions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # The script only ever calls `gh` against $GITHUB_REPOSITORY, so the token
+      # comes from the workflow scope and no PAT is stored in the repository.
+      - name: Apply labels
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          QUICKEX_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.check }}" = "true" ]; then
+            ./scripts/sync-labels.sh --check
+          elif [ "${{ inputs.prune }}" = "true" ]; then
+            ./scripts/sync-labels.sh --prune
+          else
+            ./scripts/sync-labels.sh
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Label sync"
+            echo ""
+            echo "Source of truth: \`.github/labels.yml\` (${GITHUB_REPOSITORY})"
+            echo ""
+            echo "| label | colour | description |"
+            echo "|---|---|---|"
+            while IFS= read -r name; do
+              [ -n "$name" ] || continue
+              echo "| \`$name\` | see file | see file |"
+            done < <(grep '^- name:' .github/labels.yml | sed 's/^- name:[[:space:]]*//')
+          } >> "$GITHUB_STEP_SUMMARY"

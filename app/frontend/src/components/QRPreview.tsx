@@ -87,7 +87,6 @@ export function QRPreview({
                   level={effectiveErrorCorrection}
                   bgColor="white"
                   fgColor={brandColor}
-                  includeMargin={true}
                 />
                 {/* Logo overlay - max 15% of QR code size */}
                 {logoUrl && (

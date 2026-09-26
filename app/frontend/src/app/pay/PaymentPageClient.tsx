@@ -10,6 +10,7 @@ import { RefundedPaymentState } from "@/components/payment-states/RefundedPaymen
 import { LoadingState } from "@/components/payment-states/LoadingState";
 import { ErrorState } from "@/components/payment-states/ErrorState";
 import { getQuickexApiBase } from "@/lib/api";
+import { notifyPaymentCompleted } from "@/lib/cacheInvalidation";
 
 type LinkState = "ACTIVE" | "EXPIRED" | "PAID" | "REFUNDED" | "DRAFT";
 
@@ -149,6 +150,14 @@ function PaymentPageContent() {
       amount,
       asset,
       transactionHash: txHash,
+    });
+
+    // Invalidate caches across tabs and application
+    notifyPaymentCompleted({
+      txHash,
+      username,
+      amount,
+      asset,
     });
 
     // Update status locally to transition to PAID state

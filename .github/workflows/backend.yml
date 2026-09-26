@@ -74,3 +74,12 @@ jobs:
           STELLAR_NETWORK: testnet
           SUPABASE_URL: https://test.supabase.co
           SUPABASE_ANON_KEY: test-key
+
+      - name: Database Migration Forward and Rollback Verification
+        run: pnpm run db:verify-migrations
+
+      - name: Financial Authorization Mutation Testing
+        run: pnpm run test:mutation
+
+      - name: Horizon-Backed Endpoints Performance Regression Tests
+        run: pnpm run test:perf:horizon
