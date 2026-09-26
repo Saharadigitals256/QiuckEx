@@ -44,6 +44,7 @@ pre-commit run --all-files
 | `gitleaks`            | Broad regex-based scanner covering 130+ secret providers |
 | `detect-private-key`  | Blocks PEM-encoded private keys                          |
 | `no-commit-to-branch` | Prevents direct commits to `main`                        |
+| `quickex-precommit`   | Local rules: forbidden paths, secret shapes, formatting  |
 
 ---
 
@@ -118,3 +119,29 @@ If a secret is accidentally committed:
 # Run pre-commit on all files
 pre-commit run --all-files
 ```
+
+### Local hook: `quickex-precommit`
+
+The QuickEx hook (`scripts/precommit/check.mjs`) covers what the generic scanners cannot express.
+It is dependency-free, so it runs from the checkout with no install step, and the same check runs in
+CI, so a rule that exists only on one developer's machine cannot merge.
+
+It blocks:
+
+- **Paths that must never be committed** — `.env` files (`.env.example` excepted), private keys and
+  keystores, `node_modules/`, `dist/`, `.turbo/`, `coverage/`, Rust `target/`, and log files.
+- **High-signal secret shapes in any text file** — Stellar secret keys, Supabase service-role JWTs,
+  PEM private-key blocks, GitHub PATs, AWS key ids, and Slack tokens. A finding names the *kind* of
+  secret, never the value: printing a match into a log would copy the secret somewhere it is not
+  protected.
+- **Whitespace problems** in files you are editing: missing final newline, trailing blank line, CRLF
+  endings, and trailing whitespace.
+
+Formatting is enforced as a **ratchet**: a violation that already exists in the committed file is
+reported as pre-existing debt rather than blocking you, but any violation your change introduces
+fails. Run `node scripts/precommit/check.mjs --all --no-ratchet` to see the full backlog.
+
+Reviewed exceptions live in
+[`scripts/precommit/allowlist.txt`](../scripts/precommit/allowlist.txt), one `<glob> | <justification>`
+per line. An entry without a justification fails the test suite, so a suppression cannot be added
+quietly. Full documentation: [`scripts/precommit/README.md`](../scripts/precommit/README.md).

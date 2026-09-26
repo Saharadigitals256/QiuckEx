@@ -56,3 +56,21 @@ repos:
     rev: v8.18.4
     hooks:
       - id: gitleaks
+
+  # ── QuickEx local rules (issue #297) ─────────────────────────────────────
+  # Dependency-free, so it runs from the checkout with no install step. It
+  # covers what the generic hooks above cannot express: paths that must never be
+  # committed (secrets, build output), high-signal secret shapes, and whitespace
+  # hygiene. See scripts/precommit/README.md.
+  #
+  # `pass_filenames: false` because the check decides for itself which files to
+  # look at (staged by default, via `git diff --cached`) and needs the committed
+  # version of each file to apply the formatting ratchet.
+  - repo: local
+    hooks:
+      - id: quickex-precommit
+        name: QuickEx secrets, generated artifacts, and formatting
+        entry: node scripts/precommit/check.mjs
+        language: system
+        pass_filenames: false
+        always_run: true

@@ -61,6 +61,29 @@ jobs:
             --filter="${{ matrix.package }}..." \
             --cache-dir=".turbo/cache"
 
+  # ── Pre-commit rules (issue #297) ────────────────────────────────────────
+  # Runs the same local hook developers get, so a rule that only exists on one
+  # machine cannot merge. Needs full history for the formatting ratchet.
+  precommit-check:
+    name: Pre-commit Rules
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Check secrets, artifacts, and formatting
+        run: node scripts/precommit/check.mjs --all
+
+      - name: Test the pre-commit check
+        run: node --test scripts/precommit/__tests__/precommit.test.mjs
+
   # ── Governance gate (issues #306-#309) ────────────────────────────────────
   # Dependency-free: validates ADRs, asset listing policy, retention schedule and
   # the a11y/i18n standard before anything is installed.
