@@ -73,7 +73,9 @@ fn seed_escrow(
         #[allow(clippy::needless_borrow)]
         arbiters: Vec::new(&env),
         arbiter_threshold: 0,
-    };
+    memo: None,
+            milestones: Vec::new(env),
+        };
     env.as_contract(contract_id, || {
         let key: Bytes = commitment.into();
         put_escrow(env, &key, &entry);
@@ -272,7 +274,9 @@ fn expected_escrow_entry(
         arbiter,
         arbiters: Vec::new(env),
         arbiter_threshold: 0,
-    }
+    memo: None,
+            milestones: Vec::new(env),
+        }
 }
 
 fn legacy_privacy_storage_key(env: &Env, owner: &Address) -> (Symbol, Address) {
@@ -793,7 +797,9 @@ fn bench_common_escrow_storage_footprint() {
         arbiter: None,
         arbiters: Vec::new(&env),
         arbiter_threshold: 0,
-    };
+    memo: None,
+            milestones: Vec::new(env),
+        };
 
     let legacy_bytes = legacy_escrow_storage_footprint_bytes(&env, &commitment, &entry);
     let compact_bytes = compact_escrow_storage_footprint_bytes(&env, &commitment, &entry);
@@ -820,7 +826,9 @@ fn bench_arbiter_escrow_storage_footprint() {
         arbiter: Some(Address::generate(&env)),
         arbiters: Vec::new(&env),
         arbiter_threshold: 0,
-    };
+    memo: None,
+            milestones: Vec::new(env),
+        };
 
     let legacy_bytes = legacy_escrow_storage_footprint_bytes(&env, &commitment, &entry);
     let compact_bytes = compact_escrow_storage_footprint_bytes(&env, &commitment, &entry);

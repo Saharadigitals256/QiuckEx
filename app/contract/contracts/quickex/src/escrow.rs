@@ -1049,6 +1049,12 @@ pub fn cleanup_escrow(env: &Env, commitment: BytesN<32>) -> Result<(), QuickexEr
 /// # Events
 /// Emits `EscrowCleaned` event for each successfully cleaned escrow.
 pub fn cleanup_escrow_batch(env: &Env, commitments: Vec<BytesN<32>>) -> Result<u32, QuickexError> {
+    const MAX_CLEANUP_BATCH_SIZE: u32 = 20;
+
+    if commitments.len() > MAX_CLEANUP_BATCH_SIZE {
+        return Err(QuickexError::InvalidAmount);
+    }
+
     let mut cleaned_count = 0u32;
 
     for commitment in commitments.iter() {
