@@ -1,4 +1,6 @@
-use soroban_sdk::{contractevent, Address, BytesN, Env};
+use soroban_sdk::{contractevent, Address, BytesN, Env, Vec};
+
+use crate::types::{GovernanceAction, GovernanceConfig};
 
 /// Canonical event schema version.
 ///
@@ -118,6 +120,49 @@ pub const EVENT_SCHEMAS: &[EventSchema] = &[
             "new_wasm_hash",
             "admin",
         ],
+        payload_keys: &["schema_version", "timestamp"],
+        schema_version: EVENT_SCHEMA_VERSION,
+    },
+    EventSchema {
+        name: "GovernanceConfigChanged",
+        topics: &[EVENT_TOPIC_ADMIN, "GovernanceConfigChanged"],
+        payload_keys: &[
+            "schema_version",
+            "signer_count",
+            "signers",
+            "threshold",
+            "timelock_secs",
+            "timestamp",
+        ],
+        schema_version: EVENT_SCHEMA_VERSION,
+    },
+    EventSchema {
+        name: "GovernanceProposalCreated",
+        topics: &[EVENT_TOPIC_ADMIN, "GovernanceProposalCreated", "proposal_id", "proposer"],
+        payload_keys: &["action", "execute_after", "schema_version", "timestamp"],
+        schema_version: EVENT_SCHEMA_VERSION,
+    },
+    EventSchema {
+        name: "GovernanceProposalApproved",
+        topics: &[EVENT_TOPIC_ADMIN, "GovernanceProposalApproved", "proposal_id", "signer"],
+        payload_keys: &["approval_count", "schema_version", "timestamp"],
+        schema_version: EVENT_SCHEMA_VERSION,
+    },
+    EventSchema {
+        name: "GovernanceProposalCanceled",
+        topics: &[EVENT_TOPIC_ADMIN, "GovernanceProposalCanceled", "proposal_id", "signer"],
+        payload_keys: &["schema_version", "timestamp"],
+        schema_version: EVENT_SCHEMA_VERSION,
+    },
+    EventSchema {
+        name: "GovernanceCancellationVote",
+        topics: &[EVENT_TOPIC_ADMIN, "GovernanceCancellationVote", "proposal_id", "signer"],
+        payload_keys: &["schema_version", "threshold", "timestamp", "vote_count"],
+        schema_version: EVENT_SCHEMA_VERSION,
+    },
+    EventSchema {
+        name: "GovernanceProposalExecuted",
+        topics: &[EVENT_TOPIC_ADMIN, "GovernanceProposalExecuted", "proposal_id"],
         payload_keys: &["schema_version", "timestamp"],
         schema_version: EVENT_SCHEMA_VERSION,
     },
@@ -645,6 +690,158 @@ pub(crate) fn publish_upgrade_completed(
         schema_version: EVENT_SCHEMA_VERSION,
         old_version,
         new_version,
+        timestamp: env.ledger().timestamp(),
+    }
+    .publish(env);
+}
+
+#[contractevent(topics = ["TOPIC_ADMIN", "GovernanceConfigChanged"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GovernanceConfigChangedEvent {
+    pub schema_version: u32,
+    pub threshold: u32,
+    pub signer_count: u32,
+    pub signers: Vec<Address>,
+    pub timelock_secs: u64,
+    pub timestamp: u64,
+}
+
+pub(crate) fn publish_governance_config_changed(env: &Env, config: &GovernanceConfig) {
+    GovernanceConfigChangedEvent {
+        schema_version: EVENT_SCHEMA_VERSION,
+        threshold: config.threshold,
+        signer_count: config.signers.len(),
+        signers: config.signers.clone(),
+        timelock_secs: config.timelock_secs,
+        timestamp: env.ledger().timestamp(),
+    }
+    .publish(env);
+}
+
+#[contractevent(topics = ["TOPIC_ADMIN", "GovernanceProposalCreated"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GovernanceProposalCreatedEvent {
+    #[topic]
+    pub proposal_id: u64,
+    #[topic]
+    pub proposer: Address,
+    pub schema_version: u32,
+    pub action: GovernanceAction,
+    pub execute_after: u64,
+    pub timestamp: u64,
+}
+
+pub(crate) fn publish_governance_proposal_created(
+    env: &Env,
+    proposal_id: u64,
+    proposer: Address,
+    action: GovernanceAction,
+    execute_after: u64,
+) {
+    GovernanceProposalCreatedEvent {
+        proposal_id,
+        proposer,
+        schema_version: EVENT_SCHEMA_VERSION,
+        action,
+        execute_after,
+        timestamp: env.ledger().timestamp(),
+    }
+    .publish(env);
+}
+
+#[contractevent(topics = ["TOPIC_ADMIN", "GovernanceProposalApproved"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GovernanceProposalApprovedEvent {
+    #[topic]
+    pub proposal_id: u64,
+    #[topic]
+    pub signer: Address,
+    pub schema_version: u32,
+    pub approval_count: u32,
+    pub timestamp: u64,
+}
+
+pub(crate) fn publish_governance_proposal_approved(
+    env: &Env,
+    proposal_id: u64,
+    signer: Address,
+    approval_count: u32,
+) {
+    GovernanceProposalApprovedEvent {
+        proposal_id,
+        signer,
+        schema_version: EVENT_SCHEMA_VERSION,
+        approval_count,
+        timestamp: env.ledger().timestamp(),
+    }
+    .publish(env);
+}
+
+#[contractevent(topics = ["TOPIC_ADMIN", "GovernanceProposalCanceled"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GovernanceProposalCanceledEvent {
+    #[topic]
+    pub proposal_id: u64,
+    #[topic]
+    pub signer: Address,
+    pub schema_version: u32,
+    pub timestamp: u64,
+}
+
+pub(crate) fn publish_governance_proposal_canceled(env: &Env, proposal_id: u64, signer: Address) {
+    GovernanceProposalCanceledEvent {
+        proposal_id,
+        signer,
+        schema_version: EVENT_SCHEMA_VERSION,
+        timestamp: env.ledger().timestamp(),
+    }
+    .publish(env);
+}
+
+#[contractevent(topics = ["TOPIC_ADMIN", "GovernanceCancellationVote"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GovernanceCancellationVoteEvent {
+    #[topic]
+    pub proposal_id: u64,
+    #[topic]
+    pub signer: Address,
+    pub schema_version: u32,
+    pub vote_count: u32,
+    pub threshold: u32,
+    pub timestamp: u64,
+}
+
+pub(crate) fn publish_governance_cancellation_vote(
+    env: &Env,
+    proposal_id: u64,
+    signer: Address,
+    vote_count: u32,
+    threshold: u32,
+) {
+    GovernanceCancellationVoteEvent {
+        proposal_id,
+        signer,
+        schema_version: EVENT_SCHEMA_VERSION,
+        vote_count,
+        threshold,
+        timestamp: env.ledger().timestamp(),
+    }
+    .publish(env);
+}
+
+#[contractevent(topics = ["TOPIC_ADMIN", "GovernanceProposalExecuted"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GovernanceProposalExecutedEvent {
+    #[topic]
+    pub proposal_id: u64,
+    pub schema_version: u32,
+    pub timestamp: u64,
+}
+
+pub(crate) fn publish_governance_proposal_executed(env: &Env, proposal_id: u64) {
+    GovernanceProposalExecutedEvent {
+        proposal_id,
+        schema_version: EVENT_SCHEMA_VERSION,
         timestamp: env.ledger().timestamp(),
     }
     .publish(env);

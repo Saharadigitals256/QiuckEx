@@ -26,6 +26,9 @@ mod fee_router_test;
 mod fee_test;
 #[cfg(test)]
 mod fuzz_test;
+mod governance;
+#[cfg(test)]
+mod governance_test;
 mod hook;
 #[cfg(test)]
 mod metadata_test;
@@ -59,8 +62,9 @@ use errors::QuickexError;
 use pause_policy::{EntryPoint, PauseChangeReason};
 use storage::*;
 use types::{
-    DeploymentMetadata, EscrowEntry, EscrowStatus, FeeConfig, OracleFeeConfig, PerAssetFeeConfig,
-    PrivacyAwareEscrowView, Role, StealthDepositParams,
+    DeploymentMetadata, EscrowEntry, EscrowStatus, FeeConfig, GovernanceAction, GovernanceConfig,
+    GovernanceProposal, OracleFeeConfig, PerAssetFeeConfig, PrivacyAwareEscrowView, Role,
+    StealthDepositParams,
 };
 
 /// QuickEx Privacy Contract
@@ -424,11 +428,19 @@ impl QuickexContract {
     }
     /// Activate emergency mode (irreversible). Only admin can call. Emits event.
     pub fn activate_emergency_mode(env: Env, caller: Address) -> Result<(), QuickexError> {
-        // Only admin can activate
-        let admin = get_admin(&env).ok_or(QuickexError::Unauthorized)?;
-        if caller != admin {
-            return Err(QuickexError::Unauthorized);
+        if storage::governance_is_initialized(&env) {
+            let config = storage::get_governance_config(&env)
+                .ok_or(QuickexError::InvalidGovernanceConfig)?;
+            if !config.signers.contains(&caller) {
+                return Err(QuickexError::NotGovernanceSigner);
+            }
+        } else {
+            let admin = get_admin(&env).ok_or(QuickexError::Unauthorized)?;
+            if caller != admin {
+                return Err(QuickexError::Unauthorized);
+            }
         }
+        caller.require_auth();
         if storage::is_emergency_mode(&env) {
             return Ok(()); // Already set
         }
@@ -775,6 +787,61 @@ impl QuickexContract {
         admin::initialize(&env, admin)
     }
 
+    /// Bootstrap M-of-N governance once, authorized by the current legacy admin.
+    /// The minimum timelock is 24 hours; all later signer changes require proposals.
+    pub fn initialize_governance(
+        env: Env,
+        caller: Address,
+        signers: Vec<Address>,
+        threshold: u32,
+        timelock_secs: u64,
+    ) -> Result<(), QuickexError> {
+        governance::initialize(&env, &caller, signers, threshold, timelock_secs)
+    }
+
+    /// Read the active governance signer set and quorum configuration.
+    pub fn get_governance_config(env: Env) -> Option<GovernanceConfig> {
+        governance::get_config(&env)
+    }
+
+    /// Create a timelocked proposal. The proposer contributes the first approval.
+    pub fn propose_governance_action(
+        env: Env,
+        proposer: Address,
+        action: GovernanceAction,
+    ) -> Result<u64, QuickexError> {
+        governance::propose(&env, &proposer, action)
+    }
+
+    /// Add an approval from an active signer.
+    pub fn approve_governance_proposal(
+        env: Env,
+        signer: Address,
+        proposal_id: u64,
+    ) -> Result<u32, QuickexError> {
+        governance::approve(&env, &signer, proposal_id)
+    }
+
+    /// Vote to cancel an unexecuted proposal; cancellation takes effect at quorum.
+    pub fn vote_to_cancel_governance_proposal(
+        env: Env,
+        signer: Address,
+        proposal_id: u64,
+    ) -> Result<bool, QuickexError> {
+        governance::vote_to_cancel(&env, &signer, proposal_id)
+    }
+
+    /// Execute a proposal once it has quorum approval and its timelock has elapsed.
+    pub fn execute_governance_proposal(env: Env, proposal_id: u64) -> Result<(), QuickexError> {
+        pause_policy::require_admin_entry_allowed(&env)?;
+        governance::execute(&env, proposal_id)
+    }
+
+    /// Read proposal status, approvals, cancellation votes, and execute-after time.
+    pub fn get_governance_proposal(env: Env, proposal_id: u64) -> Option<GovernanceProposal> {
+        governance::get_proposal(&env, proposal_id)
+    }
+
     /// Get the stored contract schema version.
     ///
     /// Returns `0` for legacy deployments created before version tracking existed.
@@ -971,6 +1038,11 @@ impl QuickexContract {
         admin::require_initialized(&env)?;
         pause_policy::require_admin_entry_allowed(&env)?;
         hook::assert_not_reentrant(&env)?;
+        if storage::governance_is_initialized(&env) {
+            return Err(QuickexError::GovernanceRequired);
+        }
+        let caller = admin::get_admin(&env).ok_or(QuickexError::Unauthorized)?;
+        admin::require_admin(&env, &caller)?;
         hook::register_hook(&env, hook_contract)
     }
 
@@ -979,6 +1051,11 @@ impl QuickexContract {
         admin::require_initialized(&env)?;
         pause_policy::require_admin_entry_allowed(&env)?;
         hook::assert_not_reentrant(&env)?;
+        if storage::governance_is_initialized(&env) {
+            return Err(QuickexError::GovernanceRequired);
+        }
+        let caller = admin::get_admin(&env).ok_or(QuickexError::Unauthorized)?;
+        admin::require_admin(&env, &caller)?;
         hook::unregister_hook(&env, hook_contract)
     }
 
@@ -1306,7 +1383,8 @@ impl QuickexContract {
 
     /// Upgrade the contract to a new WASM implementation (**Admin only**).
     ///
-    /// Caller must have the [`Role::Admin`] role and authorize.
+    /// Caller must have the [`Role::Admin`] role and authorize before governance bootstrap.
+    /// After governance bootstrap, upgrades must use an approved timelocked proposal.
     /// The new WASM must be pre-uploaded to the network.
     /// Emits an upgrade event for audit.
     ///
@@ -1409,7 +1487,6 @@ impl QuickexContract {
         caller: Address,
         new_version: u32,
     ) -> Result<u32, QuickexError> {
-        pause_policy::require_admin_entry_allowed(&env)?;
         admin::complete_upgrade(&env, &caller, new_version)
     }
 

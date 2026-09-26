@@ -39,5 +39,18 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+      - name: Enforce contract CPU, memory, and storage regression budgets
+        run: cargo test -p quickex bench_core_lifecycle_costs -- --nocapture
+        env:
+          QUICKEX_BENCH_ARTIFACT_DIR: target/quickex-budget-report
+
+      - name: Upload contract budget report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickex-contract-budget-report
+          path: app/contract/target/quickex-budget-report/
+          if-no-files-found: ignore
+
       - name: Run tests
         run: cargo test

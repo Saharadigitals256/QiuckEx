@@ -73,6 +73,13 @@ pub fn has_role(env: &Env, address: &Address, role: Role) -> bool {
 pub fn require_any_role(env: &Env, caller: &Address, roles: &[Role]) -> Result<(), QuickexError> {
     require_initialized(env)?;
 
+    if storage::governance_is_initialized(env) {
+        if storage::governance_execution_in_progress(env) {
+            return Ok(());
+        }
+        return Err(QuickexError::GovernanceRequired);
+    }
+
     caller.require_auth();
     let user_roles = storage::get_roles(env, caller);
     for role in roles {
@@ -193,21 +200,28 @@ pub fn get_version(env: &Env) -> u32 {
 }
 
 pub fn migrate(env: &Env, caller: &Address) -> Result<u32, QuickexError> {
+    if storage::governance_is_initialized(env)
+        && !storage::governance_execution_in_progress(env)
+    {
+        return Err(QuickexError::GovernanceRequired);
+    }
+
     let from_version = get_version(env);
     if from_version == storage::LEGACY_CONTRACT_VERSION {
-        caller.require_auth();
-
         let admin = storage::get_admin(env).ok_or(QuickexError::Unauthorized)?;
-        if admin != *caller {
-            return Err(QuickexError::InsufficientRole);
+        if !storage::governance_execution_in_progress(env) {
+            caller.require_auth();
+            if admin != *caller {
+                return Err(QuickexError::InsufficientRole);
+            }
         }
 
         // Legacy deployments may not have role assignments. Seed Admin role so
         // post-migration admin checks continue to work.
-        let mut roles = storage::get_roles(env, caller);
+        let mut roles = storage::get_roles(env, &admin);
         if !roles.contains(Role::Admin) {
             roles.push_back(Role::Admin);
-            storage::set_roles(env, caller, &roles);
+            storage::set_roles(env, &admin, &roles);
         }
     } else {
         require_admin(env, caller)?;
@@ -259,6 +273,9 @@ pub fn set_upgrade_window(
     end: u64,
 ) -> Result<(), QuickexError> {
     require_admin(env, caller)?;
+    if end != 0 && end <= start {
+        return Err(QuickexError::InvalidUpgradeWindow);
+    }
     storage::set_upgrade_window(env, start, end);
     Ok(())
 }
@@ -272,11 +289,11 @@ pub fn start_upgrade(env: &Env, caller: &Address, new_version: u32) -> Result<()
 
     // Check upgrade window is active (Issue #432 AC1)
     if !storage::is_upgrade_window_active(env) {
-        return Err(QuickexError::InvalidAmount); // Repurpose for "upgrade window not active"
+        return Err(QuickexError::InvalidAmount);
     }
 
     if storage::is_upgrade_in_progress(env) {
-        return Err(QuickexError::ContractPaused); // Reuse for "upgrade in progress"
+        return Err(QuickexError::ContractPaused);
     }
 
     let old_version = get_version(env);
@@ -304,8 +321,37 @@ pub fn complete_upgrade(
     caller: &Address,
     new_version: u32,
 ) -> Result<u32, QuickexError> {
+    let governance_active = storage::governance_is_initialized(env);
     if !storage::is_upgrade_in_progress(env) {
-        return Err(QuickexError::InternalError); // Not in upgrade state
+        return Err(if governance_active {
+            QuickexError::UpgradeNotInProgress
+        } else {
+            QuickexError::InternalError
+        });
+    }
+
+    if governance_active {
+        if !crate::governance::is_active_signer(env, caller) {
+            return Err(QuickexError::NotGovernanceSigner);
+        }
+        caller.require_auth();
+        let expected_version = storage::get_pending_upgrade_version(env)
+            .ok_or(QuickexError::UpgradeNotInProgress)?;
+        if new_version != expected_version {
+            return Err(QuickexError::InvalidContractVersion);
+        }
+        let old_version = get_version(env);
+        let authority = storage::get_admin(env).ok_or(QuickexError::Unauthorized)?;
+        storage::set_governance_execution(env, true);
+        let migrated_version = migrate(env, &authority)?;
+        if migrated_version != expected_version {
+            return Err(QuickexError::InvalidContractVersion);
+        }
+        storage::set_governance_execution(env, false);
+        storage::set_upgrade_in_progress(env, false);
+        storage::clear_pending_upgrade_version(env);
+        publish_upgrade_completed(env, caller, old_version, migrated_version);
+        return Ok(migrated_version);
     }
 
     let old_version = get_version(env);

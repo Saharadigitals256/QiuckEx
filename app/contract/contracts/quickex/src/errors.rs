@@ -19,6 +19,14 @@ pub enum QuickexError {
     Unauthorized = 200,
     AlreadyInitialized = 201,
     InsufficientRole = 202,
+    /// Caller is not an active governance signer.
+    NotGovernanceSigner = 203,
+    /// The configured signer set or threshold is invalid.
+    InvalidGovernanceConfig = 204,
+    /// Governance has already been initialized.
+    GovernanceAlreadyInitialized = 205,
+    /// A multisig governance proposal is required for this privileged operation.
+    GovernanceRequired = 206,
     // State, escrow, and commitment violations (300-399)
     ContractPaused = 300,
     PrivacyAlreadySet = 301,
@@ -59,6 +67,26 @@ pub enum QuickexError {
     InsufficientVotes = 321,
     /// Hook contract is not allowed.
     HookNotAllowed = 322,
+    /// The configured upgrade window is invalid.
+    InvalidUpgradeWindow = 323,
+    /// Another upgrade is already pending or executing.
+    UpgradeAlreadyInProgress = 324,
+    /// No upgrade is pending completion.
+    UpgradeNotInProgress = 325,
+    /// The governance proposal timelock has not elapsed.
+    TimelockNotElapsed = 326,
+    /// No governance proposal exists for the supplied id.
+    ProposalNotFound = 327,
+    /// This signer has already approved the proposal.
+    ProposalAlreadyApproved = 328,
+    /// The proposal has already been executed.
+    ProposalAlreadyExecuted = 329,
+    /// The proposal has been canceled.
+    ProposalCanceled = 330,
+    /// The proposal has not reached its approval threshold.
+    InsufficientApprovals = 331,
+    /// The proposal action is invalid for the current governance state.
+    InvalidProposal = 332,
     // Stealth address errors (400-499)
     /// Derived stealth address does not match the provided one.
     StealthAddressMismatch = 400,
@@ -81,4 +109,85 @@ pub enum QuickexError {
     NonceAlreadyUsed = 500,
     /// The signature's valid_until timestamp has passed; signature expired.
     SignatureExpired = 501,
+}
+
+#[cfg(test)]
+mod compatibility_tests {
+    use super::QuickexError;
+
+    #[test]
+    fn existing_error_codes_remain_stable() {
+        let existing_codes = [
+            (QuickexError::InvalidAmount, 100),
+            (QuickexError::InvalidSalt, 101),
+            (QuickexError::InvalidPrivacyLevel, 102),
+            (QuickexError::Unauthorized, 200),
+            (QuickexError::AlreadyInitialized, 201),
+            (QuickexError::InsufficientRole, 202),
+            (QuickexError::ContractPaused, 300),
+            (QuickexError::PrivacyAlreadySet, 301),
+            (QuickexError::CommitmentNotFound, 302),
+            (QuickexError::CommitmentAlreadyExists, 303),
+            (QuickexError::AlreadySpent, 304),
+            (QuickexError::InvalidCommitment, 305),
+            (QuickexError::CommitmentMismatch, 306),
+            (QuickexError::EscrowExpired, 307),
+            (QuickexError::EscrowNotExpired, 308),
+            (QuickexError::InvalidOwner, 309),
+            (QuickexError::NoArbiter, 310),
+            (QuickexError::InvalidDisputeState, 311),
+            (QuickexError::NotArbiter, 312),
+            (QuickexError::OperationPaused, 313),
+            (QuickexError::InvalidContractVersion, 314),
+            (QuickexError::Overpayment, 315),
+            (QuickexError::ReentrancyDetected, 316),
+            (QuickexError::HookAlreadyRegistered, 317),
+            (QuickexError::HookNotRegistered, 318),
+            (QuickexError::NotAnArbiter, 319),
+            (QuickexError::ArbiterAlreadyVoted, 320),
+            (QuickexError::InsufficientVotes, 321),
+            (QuickexError::HookNotAllowed, 322),
+            (QuickexError::StealthAddressMismatch, 400),
+            (QuickexError::StealthAddressAlreadyUsed, 401),
+            (QuickexError::StealthEscrowNotFound, 402),
+            (QuickexError::NonceAlreadyUsed, 500),
+            (QuickexError::SignatureExpired, 501),
+            (QuickexError::OracleStalePrice, 600),
+            (QuickexError::OraclePriceUnavailable, 601),
+            (QuickexError::OraclePriceInvalid, 602),
+            (QuickexError::InternalError, 900),
+            (QuickexError::InvalidTimeout, 901),
+        ];
+
+        for (error, expected_code) in existing_codes {
+            assert_eq!(error as u32, expected_code);
+        }
+    }
+
+    #[test]
+    fn new_governance_errors_use_additive_codes() {
+        let new_codes = [
+            (QuickexError::NotGovernanceSigner, 203),
+            (QuickexError::InvalidGovernanceConfig, 204),
+            (QuickexError::GovernanceAlreadyInitialized, 205),
+            (QuickexError::GovernanceRequired, 206),
+            (QuickexError::InvalidUpgradeWindow, 323),
+            (QuickexError::UpgradeAlreadyInProgress, 324),
+            (QuickexError::UpgradeNotInProgress, 325),
+            (QuickexError::TimelockNotElapsed, 326),
+            (QuickexError::ProposalNotFound, 327),
+            (QuickexError::ProposalAlreadyApproved, 328),
+            (QuickexError::ProposalAlreadyExecuted, 329),
+            (QuickexError::ProposalCanceled, 330),
+            (QuickexError::InsufficientApprovals, 331),
+            (QuickexError::InvalidProposal, 332),
+        ];
+
+        for (index, (error, expected_code)) in new_codes.iter().enumerate() {
+            assert_eq!(*error as u32, *expected_code);
+            for (other, _) in new_codes.iter().skip(index + 1) {
+                assert_ne!(error, other);
+            }
+        }
+    }
 }
