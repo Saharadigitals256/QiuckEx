@@ -118,6 +118,22 @@ export interface RecurringPaymentFailedPayload extends BaseNotificationPayload {
   permanent: boolean;
 }
 
+export interface RecurringPaymentNotificationEvent {
+  eventType: 'recurring.payment.executed' | 'recurring.payment.failed';
+  eventId: string;
+  recipientPublicKey: string;
+  linkId: string;
+  executionId: string;
+  amount: number;
+  asset: string;
+  periodNumber: number;
+  transactionHash?: string;
+  failureReason?: string;
+  retryCount?: number;
+  permanent?: boolean;
+  occurredAt: string;
+}
+
 export interface RecurringLinkStatusPayload extends BaseNotificationPayload {
   eventType: NotificationEventType;
   linkId: string;

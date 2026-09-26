@@ -44,6 +44,7 @@ export class RecurringPaymentsService {
       const link = await this.repository.createLink({
         username: dto.username || null,
         destination: dto.destination || null,
+        payerPublicKey: dto.payerPublicKey || null,
         amount: dto.amount,
         asset: dto.asset,
         assetIssuer: dto.assetIssuer || null,
@@ -520,6 +521,7 @@ export class RecurringPaymentsService {
       id: link.id,
       username: link.username || undefined,
       destination: link.destination || undefined,
+      payerPublicKey: link.payer_public_key || undefined,
       amount: link.amount,
       asset: link.asset,
       assetIssuer: link.asset_issuer || undefined,

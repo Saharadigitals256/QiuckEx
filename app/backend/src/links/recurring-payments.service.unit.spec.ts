@@ -20,9 +20,11 @@ describe('RecurringPaymentsService', () => {
     listLinks: jest.fn(),
     updateLink: jest.fn(),
     updateStatus: jest.fn(),
+    updateExecutionStatus: jest.fn(),
     deleteLink: jest.fn(),
     createExecution: jest.fn(),
     findExecutionsByLinkId: jest.fn(),
+    findExecutionById: jest.fn(),
     getDueForExecution: jest.fn(),
   };
 
@@ -286,6 +288,28 @@ describe('RecurringPaymentsService', () => {
       const nextDate = service.calculateNextExecutionDate(currentDate, FrequencyType.YEARLY);
       
       expect(nextDate.getFullYear()).toBe(currentDate.getFullYear() + 1);
+    });
+  });
+
+  describe('markPaymentFailure', () => {
+    it('loads and updates an execution by its execution ID', async () => {
+      const execution = {
+        id: 'execution-id',
+        recurring_link_id: 'link-id',
+        period_number: 1,
+      };
+      mockRepository.findExecutionById.mockResolvedValue(execution);
+      mockRepository.updateExecutionStatus.mockResolvedValue({ ...execution, status: 'failed' });
+
+      await service.markPaymentFailure('execution-id', 'temporary outage', 3);
+
+      expect(repository.findExecutionById).toHaveBeenCalledWith('execution-id');
+      expect(repository.findExecutionsByLinkId).not.toHaveBeenCalled();
+      expect(repository.updateExecutionStatus).toHaveBeenCalledWith(
+        'execution-id',
+        'failed',
+        expect.objectContaining({ failureReason: 'temporary outage', retryCount: 3 }),
+      );
     });
   });
 });
