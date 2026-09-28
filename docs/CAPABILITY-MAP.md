@@ -154,7 +154,7 @@ Monolithic Soroban contract `QuickexContract` (`contracts/quickex/src/lib.rs`). 
 
 | Capability | Owning module | Status | Notes |
 |---|---|---|---|
-| Escrow deposit / withdraw / commitments | `src/escrow.rs`, `src/commitment.rs`, `src/escrow_id.rs` | **Live** | Testnet only; extensive test suite (unit, fuzz, bench, upgrade). |
+| Escrow deposit / withdraw / commitments | `src/escrow.rs`, `src/commitment.rs`, `src/escrow_id.rs` | **Live** | Testnet only; extensive test suite (unit, fuzz, bench, upgrade). Complete state machine with all valid transitions: Created→Pending→Spent, Created→Pending→Refunded, Created→Pending→Disputed→Spent/Refunded. |
 | Fee routing (basis points, per-asset overrides) | `src/fee` modules | **Live** | Static fees only. |
 | Pause policy, emergency mode, admin/roles | `src/admin.rs`, `src/pause_policy.rs` | **Live** | Emergency mode is irreversible by design. |
 | `create_escrow` counter endpoint | `src/lib.rs` (`create_escrow`) | **Mocked** | Only increments a counter; `_from`/`_to`/`_amount` params are reserved and ignored. |
