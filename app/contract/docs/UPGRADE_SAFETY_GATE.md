@@ -1,6 +1,8 @@
 # Upgrade Safety Gate & Post-Upgrade Invariants
 **Issue #432** | Wave 5 – Lifecycle Management
 
+> **Legacy procedure:** This document records the original single-admin upgrade gate. It applies only before `initialize_governance` is called. Production deployments with governance initialized must use the M-of-N proposal and timelock lifecycle in [GOVERNANCE_AND_COMPATIBILITY.md](./GOVERNANCE_AND_COMPATIBILITY.md); direct legacy admin operations and standalone migration then fail with `GovernanceRequired` (206).
+
 ## Overview
 
 This document describes the contract-level safeguards and invariant enforcement mechanisms for safe, controlled upgrades in QuickEx.
@@ -228,15 +230,15 @@ pub struct UpgradeCompletedEvent {
 
 ---
 
-## Error Codes
+## Legacy Error Codes
 
-New or repurposed errors:
+The entries below describe the original Issue #432 behavior only. These errors are no longer repurposed in the current contract; dedicated codes are used for new upgrade and governance failures.
 
 | Error | Code | Trigger | Context |
 |-------|------|---------|---------|
-| `InvalidAmount` | 100 | Upgrade window not active | `start_upgrade()` outside `[start, end)` |
-| `ContractPaused` | 300 | Upgrade already in progress | `start_upgrade()` called twice |
-| `InternalError` | 900 | Post-upgrade invariants failed | `complete_upgrade()` after failed migration |
+| `InvalidAmount` | 100 | Historical upgrade-window error | Legacy behavior only |
+| `ContractPaused` | 300 | Historical upgrade-in-progress error | Legacy behavior only |
+| `InternalError` | 900 | Post-upgrade invariants failed | `complete_upgrade()` migration validation |
 
 ---
 
@@ -350,7 +352,7 @@ When upgrading between contract versions:
 ## FAQ
 
 **Q: Can I call `migrate()` without `start_upgrade()`?**
-A: Yes. `migrate()` is standalone and always allowed. `start_upgrade()` / `complete_upgrade()` add extra gating for safety but are optional for ad-hoc migrations.
+A: Only before multisig governance is initialized. Governance-enabled deployments require an approved, timelocked upgrade proposal and reject standalone migration.
 
 **Q: What if I miss the upgrade window?**
 A: Call `set_upgrade_window()` again to open a new one. There's no "missed upgrade" penalty; you just reschedule.
@@ -377,6 +379,7 @@ A: Look for `UpgradeStarted` events without a corresponding `UpgradeCompleted` i
 
 ## References
 
+- [Current governance, error-code, and upgrade guarantees](./GOVERNANCE_AND_COMPATIBILITY.md)
 - [Soroban Contract Upgrade Guide](https://developers.stellar.org/build/guides/soroban-migration)
 - [QuickEx Invariant Checks](./UPGRADE_SAFETY_GATE.md) (this file)
 - [`storage.rs::assert_post_upgrade_invariants()`](../contracts/quickex/src/storage.rs)
