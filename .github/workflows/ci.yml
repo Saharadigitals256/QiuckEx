@@ -61,11 +61,12 @@ jobs:
             --filter="${{ matrix.package }}..." \
             --cache-dir=".turbo/cache"
 
-  # ── Dependency gate (issue #294) ──────────────────────────────────────────
-  # Dependency-free: validates dependency provenance, lockfile integrity, and
-  # the license policy before anything is installed.
-  dependency-gate:
-    name: Dependency Gate
+  # -- Documentation gate (issue #295) ---------------------------------------
+  # Validates that docs/openapi.json, the contract map, and the mobile env docs
+  # still describe the API the repository implements. Static only, so it needs
+  # neither the backend running nor an install.
+  docs-gate:
+    name: Documentation Gate
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -76,26 +77,11 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          run_install: false
+      - name: Run documentation gate
+        run: node scripts/docs-check/check.mjs
 
-      # No install required: the gate reads manifests, the lockfile, and the
-      # published policy as text.
-      - name: Run dependency gate
-        run: node scripts/deps/check.mjs
-
-      - name: Test the dependency gate
-        run: node --test scripts/deps/__tests__/deps.test.mjs
-
-      # The transitive license sweep needs a real install, so it runs as a
-      # separate, install-backed step and reports its own summary.
-      - name: Install dependencies for the license sweep
-        run: pnpm install --frozen-lockfile --ignore-scripts
-
-      - name: Run license sweep over installed packages
-        run: node scripts/deps/check.mjs --only license --installed
+      - name: Test the documentation gate
+        run: node --test scripts/docs-check/__tests__/docs.test.mjs
 
   # ── Governance gate (issues #306-#309) ────────────────────────────────────
   # Dependency-free: validates ADRs, asset listing policy, retention schedule and

@@ -18,6 +18,8 @@ export enum SorobanErrorCode {
   CONTRACT_PAUSED = 'CONTRACT_PAUSED',
   /** Contract write operations are temporarily disabled by the server. */
   CONTRACT_WRITES_DISABLED = 'CONTRACT_WRITES_DISABLED',
+  /** Escrow dispute actions are disabled on mainnet by feature flag. */
+  DISPUTE_ACTIONS_DISABLED = 'DISPUTE_ACTIONS_DISABLED',
   /** Escrow / resource entry not found in contract storage. */
   ESCROW_NOT_FOUND = 'CONTRACT_ESCROW_NOT_FOUND',
   /** Escrow has already been withdrawn or refunded. */

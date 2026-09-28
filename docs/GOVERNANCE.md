@@ -72,6 +72,25 @@ node scripts/deps/check.mjs                             # dependency provenance,
 node --test scripts/deps/__tests__/deps.test.mjs        # tests for the dependency gate
 ```
 
+A second, non-governance gate keeps the published API documentation in step with the code:
+
+```bash
+node scripts/docs-check/check.mjs                     # OpenAPI, contract, and mobile docs
+node scripts/docs-check/check.mjs --only contract     # single target
+node --test scripts/docs-check/__tests__/docs.test.mjs  # tests for the gate itself
+```
+
+| Target | Enforces |
+|---|---|
+| `openapi` | the document is valid 3.x, every operation declares responses, a tag, and a description, every tag used is declared, every `$ref` resolves, no schema referenced but undeclared, no unused schema |
+| `contract` | every `@Controller` is documented in the OpenAPI document or the contract map, and the documented "no global route prefix" claim still matches `main.ts` |
+| `mobile` | every `EXPO_PUBLIC_*` variable the app reads is documented, and the API URL default is stated |
+
+It reads the backend routes as text and never starts the server, so it runs on a fresh
+clone before `pnpm install`. Adding a controller without documenting it becomes a CI
+failure rather than a 404 someone finds in production. See
+[`../scripts/docs-check/README.md`](../scripts/docs-check/README.md).
+
 The gate has **no dependencies** and never executes repository code, so it runs on a fresh clone and in CI before
 `pnpm install`. It runs in [../.github/workflows/ci.yml](../.github/workflows/ci.yml) and must pass before merge.
 
@@ -82,6 +101,24 @@ The gate has **no dependencies** and never executes repository code, so it runs 
 | `retention` | schedule shape, SLA coherence, unique categories, method vocabulary, hold justification, PII classification, doc ↔ JSON ↔ mirror agreement |
 | `a11y` | both catalogs parse, declared switcher locales have catalogs, key parity against the baseline, the standard's required sections |
 | `docs` | this hub's structure and the cross-links from each policy back here |
+
+A second, non-governance gate keeps the local development fixtures honest:
+
+```bash
+node scripts/local-dev/check-seed.mjs                    # seed matches the migrations, holds no signing material
+node --test scripts/local-dev/__tests__/seed.test.mjs    # tests for the seed check
+bash -n scripts/local-dev/bootstrap.sh                   # the bootstrap script parses
+```
+
+| Check | Enforces |
+|---|---|
+| `schema` | every table and column the seed names is created by a migration (including later `ALTER TABLE` additions) |
+| `idempotency` | every insert carries an `ON CONFLICT` clause, so re-running the bootstrap cannot duplicate rows |
+| `secrets` | no Stellar secret key, mnemonic, PEM private key block, 64-hex key, or JWT in a fixture |
+| `publicKeys` | every Stellar key in a fixture is a syntactically valid public key |
+| `localGuard` | the seed aborts unless `current_database()` is local, and runs in an explicit transaction |
+
+See [../scripts/local-dev/README.md](../scripts/local-dev/README.md).
 
 ## 6. Waivers
 
