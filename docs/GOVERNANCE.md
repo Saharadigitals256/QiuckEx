@@ -19,6 +19,8 @@ Companion maps: [CAPABILITY-MAP.md](./CAPABILITY-MAP.md) (what is actually built
 | [policies/DATA-RETENTION-PRIVACY-POLICY.md](./policies/DATA-RETENTION-PRIVACY-POLICY.md) | Retention windows, deletion requests, holds, subject rights, on-chain limits | [policies/data/retention-schedule.json](./policies/data/retention-schedule.json) | `--only retention` |
 | [policies/ACCESSIBILITY-LOCALIZATION-STANDARD.md](./policies/ACCESSIBILITY-LOCALIZATION-STANDARD.md) | WCAG 2.2 AA target, per-surface a11y rules, i18n rules, testing, ratchet | [policies/data/a11y-i18n-baseline.json](./policies/data/a11y-i18n-baseline.json) | `--only a11y` |
 | [adr/README.md](./adr/README.md) + `adr/NNNN-*.md` | Irreversible protocol and custody decisions | `adr/README.md` index | `--only adr` |
+| [policies/DEPENDENCY-PROVENANCE-POLICY.md](./policies/DEPENDENCY-PROVENANCE-POLICY.md) | Where dependency code may come from, lockfile integrity, manifest ↔ lockfile agreement | `pnpm-lock.yaml` | `node scripts/deps/check.mjs --only provenance` / `--only lockfile` |
+| [policies/DEPENDENCY-LICENSE-POLICY.md](./policies/DEPENDENCY-LICENSE-POLICY.md) | Permitted dependency licences, deny list, review list, recorded exceptions | [policies/data/dependency-license-policy.json](./policies/data/dependency-license-policy.json) | `node scripts/deps/check.mjs --only license` |
 | [security.md](./security.md), [../RELEASE_READINESS_CHECKLIST.md](../RELEASE_READINESS_CHECKLIST.md) | Secret handling, release gating | `.secrets.baseline` | CI secret scanning |
 
 Machine-readable files are the **canonical** form; the prose documents explain them, and the backend mirrors them in
@@ -66,6 +68,8 @@ node scripts/governance/check.mjs                       # everything (adr, asset
 node scripts/governance/check.mjs --only assets --json  # single target, machine-readable report
 node scripts/governance/check.mjs --only a11y --write-baseline   # refresh the a11y/i18n baseline
 node --test scripts/governance/__tests__/               # tests for the gate itself
+node scripts/deps/check.mjs                             # dependency provenance, lockfile, licenses
+node --test scripts/deps/__tests__/deps.test.mjs        # tests for the dependency gate
 ```
 
 A second, non-governance gate keeps the published API documentation in step with the code:
@@ -133,8 +137,9 @@ missing account-funds protections, self-custody violations, or invariant regress
    observability, configuration, rollout/rollback, references) — the gate checks that list.
 2. Add the machine-readable companion under `docs/policies/data/`, then add the mirror constant in the owning backend
    module plus a unit test asserting the JSON and the constant are equal.
-3. Add a row to [§1](#1-policies-and-standards), a target to `scripts/governance/check.mjs`, and tests under
-   `scripts/governance/__tests__/`.
+3. Add a row to [§1](#1-policies-and-standards), a target to the owning gate (`scripts/governance/check.mjs` for
+   governance artefacts, `scripts/deps/check.mjs` for dependency policy), and tests under that gate's
+   `__tests__/` directory.
 4. Update [CAPABILITY-MAP.md](./CAPABILITY-MAP.md) with the new status (only the four defined status terms), the
    feature-flag table if the behaviour is gated, and [BACKEND-CLIENT-CONTRACT-MAP.md](./BACKEND-CLIENT-CONTRACT-MAP.md)
    if a client-visible route changed.

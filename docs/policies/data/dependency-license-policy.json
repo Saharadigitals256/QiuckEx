@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "description": "License policy for QuickEx runtime, build and tooling dependencies. Denied licenses impose copyleft, field-of-use or non-commercial obligations that are incompatible with a permissively licensed, custody-neutral client. Review licenses are permitted only with a recorded exception.",
+  "allow": [
+    "0BSD",
+    "Apache-2.0",
+    "BlueOak-1.0.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "Python-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib"
+  ],
+  "review": [
+    "AGPL-3.0",
+    "AGPL-3.0-only",
+    "AGPL-3.0-or-later",
+    "CC-BY-4.0",
+    "CC-BY-SA-4.0",
+    "EPL-2.0",
+    "GPL-2.0",
+    "GPL-2.0-only",
+    "GPL-2.0-or-later",
+    "GPL-3.0",
+    "GPL-3.0-only",
+    "GPL-3.0-or-later",
+    "LGPL-2.1",
+    "LGPL-2.1-only",
+    "LGPL-2.1-or-later",
+    "LGPL-3.0",
+    "LGPL-3.0-only",
+    "LGPL-3.0-or-later",
+    "MPL-2.0",
+    "SSPL-1.0"
+  ],
+  "deny": [
+    "BUSL-1.1",
+    "CC-BY-NC-4.0",
+    "Commons-Clause",
+    "Elastic-2.0",
+    "Facebook-BSD-Patents",
+    "NOSL",
+    "PolyForm-Noncommercial-1.0.0"
+  ],
+  "unknownBehavior": "review",
+  "exceptions": [
+    {
+      "license": "MPL-2.0",
+      "justification": "Weak (file-level) copyleft. Accepted for build and test tooling that is not redistributed: axe-core (accessibility testing), lightningcss and its platform binaries (CSS build). Obligations are confined to the files carrying the licence, which are not part of any shipped QuickEx bundle."
+    },
+    {
+      "license": "CC-BY-4.0",
+      "justification": "Attribution-only, non-copyleft. Accepted for caniuse-lite, a build-time browser-compat data file consumed by the bundler and not redistributed as QuickEx source."
+    },
+    {
+      "license": "LGPL-3.0-or-later",
+      "justification": "Weak copyleft on a prebuilt native binary. Accepted for @img/sharp-libvips-*, the libvips distribution shipped as a prebuilt image-processing binary used only for local asset resizing. It is dynamically linked, replaceable, and not modified in-tree; the corresponding source is available from libvips upstream per the licence."
+    },
+    {
+      "license": "busboy",
+      "justification": "busboy 1.6.0 publishes no SPDX `license` field; its LICENSE file and repository are MIT. Recorded so the gate reports the packaging gap instead of blocking the build. Re-check on the next major upgrade."
+    },
+    {
+      "license": "streamsearch",
+      "justification": "streamsearch 1.1.0 publishes no SPDX `license` field; its LICENSE file and repository are MIT. Transitive dependency of busboy. Re-check on the next major upgrade."
+    }
+  ]
+}
