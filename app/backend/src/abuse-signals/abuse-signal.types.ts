@@ -2,6 +2,8 @@ export const SIGNAL_ACTION_TYPES = [
   "payment_link_status",
   "link_metadata",
   "payment_submit",
+  "marketplace_listing",
+  "marketplace_bid",
 ] as const;
 export type SignalActionType = (typeof SIGNAL_ACTION_TYPES)[number];
 

@@ -289,6 +289,38 @@ fn test_set_fee_config_accepts_max_bps() {
 }
 
 #[test]
+fn test_fee_ceiling_and_asset_override_boundaries_are_enforced() {
+    let env = Env::default();
+    let (client, admin, _, _, _) = setup_test(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(Address::generate(&env))
+        .address();
+    env.mock_all_auths();
+
+    client.set_per_asset_fee(
+        &admin,
+        &token,
+        &PerAssetFeeConfig {
+            fee_bps: MAX_FEE_BPS,
+            arbiter_bps: MAX_FEE_BPS,
+        },
+    );
+    let stored = client.get_per_asset_fee(&token).unwrap();
+    assert_eq!(stored.fee_bps, MAX_FEE_BPS);
+    assert_eq!(stored.arbiter_bps, MAX_FEE_BPS);
+
+    let result = client.try_set_per_asset_fee(
+        &admin,
+        &token,
+        &PerAssetFeeConfig {
+            fee_bps: MAX_FEE_BPS + 1,
+            arbiter_bps: 0,
+        },
+    );
+    assert_contract_error(result, QuickexError::InvalidAmount);
+}
+
+#[test]
 fn test_set_per_asset_fee_rejects_bps_above_max() {
     let env = Env::default();
     let (client, admin, _, _, _) = setup_test(&env);

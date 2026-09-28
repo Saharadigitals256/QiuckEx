@@ -8,12 +8,15 @@ import {
   Post,
   Param,
   Query,
+  UseGuards,
 } from "@nestjs/common";
 import { ApiOperation, ApiResponse, ApiTags } from "@nestjs/swagger";
 import { IsBoolean, IsInt, IsNotEmpty, IsOptional, IsString, Min, IsArray } from "class-validator";
 
 import { SorobanEventIndexerService, LedgerRangeResult } from "./soroban-event-indexer.service";
 import type { UnparsedSorobanEventRecord, UnparsedSorobanEventReason } from "./unparsed-soroban-event.repository";
+import { ApiKeyGuard } from "../auth/guards/api-key.guard";
+import { RequireScopes } from "../auth/decorators/require-scopes.decorator";
 
 class ReindexDto {
   @IsString()
@@ -49,6 +52,8 @@ class ReplayBatchDto {
  */
 @ApiTags("indexer")
 @Controller("indexer")
+@UseGuards(ApiKeyGuard)
+@RequireScopes("admin")
 export class SorobanIndexerController {
   private running = false;
 
@@ -103,6 +108,13 @@ export class SorobanIndexerController {
       schemaVersion: schemaVersion ? Number(schemaVersion) : undefined,
       errorType,
     });
+  }
+
+  @Get("unparsed-events/dead-letter")
+  @ApiOperation({ summary: "List Soroban events exhausted by replay attempts" })
+  @ApiResponse({ status: 200, description: "Dead-letter events" })
+  listDeadLetter(@Query("limit") limit?: string): Promise<UnparsedSorobanEventRecord[]> {
+    return this.indexer.listDeadLetterEvents(Number(limit ?? 100));
   }
 
   @Post("unparsed-events/replay")

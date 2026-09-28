@@ -7,12 +7,24 @@ export type SorobanEventType =
   | "EscrowDeposited"
   | "EscrowWithdrawn"
   | "EscrowRefunded"
+  | "EscrowDisputed"
+  | "EscrowFinalized"
+  | "RefundFinalized"
+  | "PartialPayment"
+  | "MilestoneCompleted"
+  | "EscrowExtensionApplied"
+  | "EscrowExtensionFeeCharged"
+  | "EscrowExtensionFeeRefunded"
+  | "EscrowCleaned"
   | "PrivacyToggled"
   | "ContractPaused"
   | "AdminChanged"
   | "ContractUpgraded"
   | "EphemeralKeyRegistered"
-  | "StealthWithdrawn";
+  | "StealthWithdrawn"
+  | "DisputeEvidenceSubmitted"
+  | "ArbiterVoteCast"
+  | "DisputeResolved";
 
 export interface BaseContractEvent {
   eventType: SorobanEventType;
@@ -50,6 +62,101 @@ export interface EscrowRefundedEvent extends BaseContractEvent {
   commitment: string;
   owner: string;
   token: string;
+  amount: bigint;
+}
+
+export interface EscrowDisputedEvent extends BaseContractEvent {
+  eventType: "EscrowDisputed";
+  commitment: string;
+  arbiter: string;
+}
+
+export interface EscrowFinalizedEvent extends BaseContractEvent {
+  eventType: "EscrowFinalized";
+  commitment: string;
+  owner: string;
+  token: string;
+  totalAmount: bigint;
+}
+
+export interface RefundFinalizedEvent extends BaseContractEvent {
+  eventType: "RefundFinalized";
+  commitment: string;
+  owner: string;
+  token: string;
+  amount: bigint;
+  expiresAt: bigint;
+}
+
+export interface PartialPaymentEvent extends BaseContractEvent {
+  eventType: "PartialPayment";
+  commitment: string;
+  payer: string;
+  token: string;
+  paymentAmount: bigint;
+  amountPaid: bigint;
+  amountDue: bigint;
+}
+
+export interface MilestoneCompletedEvent extends BaseContractEvent {
+  eventType: "MilestoneCompleted";
+  commitment: string;
+  milestoneId: number;
+  milestoneAmount: bigint;
+  totalAmountPaid: bigint;
+}
+
+export interface EscrowExtensionAppliedEvent extends BaseContractEvent {
+  eventType: "EscrowExtensionApplied";
+  commitment: string;
+  extensionCount: number;
+  extensionSecs: bigint;
+  fee: bigint;
+  newExpiresAt: bigint;
+}
+
+export interface EscrowExtensionFeeChargedEvent extends BaseContractEvent {
+  eventType: "EscrowExtensionFeeCharged";
+  commitment: string;
+  extensionSecs: bigint;
+  fee: bigint;
+}
+
+export interface EscrowExtensionFeeRefundedEvent extends BaseContractEvent {
+  eventType: "EscrowExtensionFeeRefunded";
+  commitment: string;
+  fee: bigint;
+  reason: string;
+}
+
+export interface EscrowCleanedEvent extends BaseContractEvent {
+  eventType: "EscrowCleaned";
+  commitment: string;
+  status: number;
+}
+
+export interface DisputeEvidenceSubmittedEvent extends BaseContractEvent {
+  eventType: "DisputeEvidenceSubmitted";
+  commitment: string;
+  evidenceHash: string;
+  submittedBy: string;
+}
+
+export interface ArbiterVoteCastEvent extends BaseContractEvent {
+  eventType: "ArbiterVoteCast";
+  commitment: string;
+  arbiter: string;
+  resolveForOwner: boolean;
+  voteCount: number;
+  threshold: number;
+}
+
+export interface DisputeResolvedEvent extends BaseContractEvent {
+  eventType: "DisputeResolved";
+  commitment: string;
+  resolvedForOwner: boolean;
+  totalVotes: number;
+  threshold: number;
   amount: bigint;
 }
 
@@ -104,17 +211,38 @@ export type QuickExContractEvent =
   | EscrowDepositedEvent
   | EscrowWithdrawnEvent
   | EscrowRefundedEvent
+  | EscrowDisputedEvent
+  | EscrowFinalizedEvent
+  | RefundFinalizedEvent
+  | PartialPaymentEvent
+  | MilestoneCompletedEvent
+  | EscrowExtensionAppliedEvent
+  | EscrowExtensionFeeChargedEvent
+  | EscrowExtensionFeeRefundedEvent
+  | EscrowCleanedEvent
   | PrivacyToggledEvent
   | ContractPausedEvent
   | AdminChangedEvent
   | ContractUpgradedEvent
   | EphemeralKeyRegisteredEvent
-  | StealthWithdrawnEvent;
+  | StealthWithdrawnEvent
+  | DisputeEvidenceSubmittedEvent
+  | ArbiterVoteCastEvent
+  | DisputeResolvedEvent;
 
 export type EscrowEvent =
   | EscrowDepositedEvent
   | EscrowWithdrawnEvent
-  | EscrowRefundedEvent;
+  | EscrowRefundedEvent
+  | EscrowDisputedEvent
+  | EscrowFinalizedEvent
+  | RefundFinalizedEvent
+  | PartialPaymentEvent
+  | MilestoneCompletedEvent
+  | EscrowExtensionAppliedEvent
+  | EscrowExtensionFeeChargedEvent
+  | EscrowExtensionFeeRefundedEvent
+  | EscrowCleanedEvent;
 
 export type AdminEvent =
   | ContractPausedEvent
@@ -122,3 +250,9 @@ export type AdminEvent =
   | ContractUpgradedEvent;
 
 export type StealthEvent = EphemeralKeyRegisteredEvent | StealthWithdrawnEvent;
+
+export type DisputeEvent =
+  | EscrowDisputedEvent
+  | ArbiterVoteCastEvent
+  | DisputeResolvedEvent
+  | DisputeEvidenceSubmittedEvent;

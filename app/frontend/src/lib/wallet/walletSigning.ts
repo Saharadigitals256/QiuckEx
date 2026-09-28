@@ -11,6 +11,7 @@ export class WalletUserDeniedError extends Error {
 interface WalletAdapter {
   connect(): Promise<string>;
   signTransaction(xdr: string): Promise<string>;
+  signMessage?(message: string): Promise<string>;
 }
 
 function getGlobal(key: string): any {
@@ -42,6 +43,10 @@ function getAdapter(walletId: WalletId): WalletAdapter {
           const result = await api.signTransaction(xdr);
           return typeof result === "string" ? result : result?.signedTxXdr;
         },
+        signMessage: async (message: string) => {
+          const result = await api.signMessage(message);
+          return typeof result === "string" ? result : result?.signedMessage ?? result?.signature;
+        },
       };
     }
     case "lobstr": {
@@ -50,6 +55,7 @@ function getAdapter(walletId: WalletId): WalletAdapter {
       return {
         connect: async () => api.connect(),
         signTransaction: async (xdr: string) => api.signTransaction(xdr),
+        signMessage: async (message: string) => api.signMessage(message),
       };
     }
     case "xbull": {
@@ -61,6 +67,7 @@ function getAdapter(walletId: WalletId): WalletAdapter {
           return Array.isArray(result) ? result[0] : result?.publicKey ?? result;
         },
         signTransaction: async (xdr: string) => api.sign({ xdr }),
+        signMessage: async (message: string) => api.signMessage(message),
       };
     }
     default:
@@ -102,6 +109,12 @@ export async function signXdr(walletId: WalletId, xdr: string): Promise<string> 
     if (isUserDenied(error)) throw new WalletUserDeniedError();
     throw error;
   }
+}
+
+export async function signMessage(walletId: WalletId, message: string): Promise<string> {
+  const adapter = getAdapter(walletId);
+  if (!adapter.signMessage) throw new Error('This wallet does not support message signing.');
+  return adapter.signMessage(message);
 }
 
 export async function submitSignedXdr(signedXdr: string): Promise<unknown> {

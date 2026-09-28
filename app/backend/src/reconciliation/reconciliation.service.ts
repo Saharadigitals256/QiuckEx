@@ -91,8 +91,42 @@ export class ReconciliationService {
     // Generate alert if discrepancies exceed threshold
     report.alert = this.generateDiscrepancyAlert(report);
 
+    if (typeof this.supabase.getClient === 'function') {
+      const { error } = await this.supabase
+        .getClient()
+        .from('reconciliation_runs')
+        .upsert(
+          {
+            run_id: report.runId,
+            completed_at: report.completedAt,
+            divergence_count: report.metrics?.total_divergences ?? 0,
+            divergence_rate: report.divergence_rate ?? 0,
+            report,
+          },
+          { onConflict: 'run_id' },
+        );
+      if (error) {
+        this.logger.error(`Failed to persist reconciliation report: ${error.message}`);
+      }
+    }
+
     this.logReport(report);
     return report;
+  }
+
+  async getLatestReport(): Promise<ReconciliationReport | null> {
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('reconciliation_runs')
+      .select('report')
+      .order('completed_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`Failed to load latest reconciliation report: ${error.message}`);
+    }
+    return (data?.report as ReconciliationReport | undefined) ?? null;
   }
 
   // ---------------------------------------------------------------------------

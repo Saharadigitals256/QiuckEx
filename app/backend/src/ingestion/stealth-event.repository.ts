@@ -11,11 +11,11 @@ export class StealthEventRepository {
 
   constructor(private readonly supabase: SupabaseService) {}
 
-  async upsertEvent(event: StealthEvent): Promise<void> {
+  async upsertEvent(event: StealthEvent): Promise<boolean> {
     const isRegistered = event.eventType === "EphemeralKeyRegistered";
     const registered = isRegistered ? (event as EphemeralKeyRegisteredEvent) : null;
 
-    const { error } = await this.supabase.getClient()
+    const { data, error } = await this.supabase.getClient()
       .from("stealth_events")
       .upsert(
         {
@@ -35,7 +35,8 @@ export class StealthEventRepository {
           paging_token: event.pagingToken,
         },
         { onConflict: "tx_hash,event_type,stealth_address", ignoreDuplicates: true },
-      );
+      )
+      .select("id");
 
     if (error) {
       this.logger.error(
@@ -43,5 +44,6 @@ export class StealthEventRepository {
       );
       throw error;
     }
+    return Boolean(data?.length);
   }
 }

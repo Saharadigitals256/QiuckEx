@@ -29,6 +29,34 @@ Exactly four status terms are used in this document. If you update a row, use on
 
 ---
 
+## Wallet capability discovery
+
+Wallet capability discovery is the shared contract that lets every surface ask *what a connected wallet can actually do* before it renders a signing flow, and degrade gracefully when a wallet is unsupported. It is owned by `app/frontend/src/lib/wallet-capabilities.ts` (discovery + capability model) and consumed by the payment signing states and the link generator.
+
+| Capability | Owning module | Status | Notes |
+|---|---|---|---|
+| Capability model & discovery | `app/frontend/src/lib/wallet-capabilities.ts` | **Live** | `discoverWalletCapabilities()` probes the injected provider for `signTransaction`, `signAuthEntry`, `signMessage`, and network passphrase support. Returns a stable `WalletCapabilities` object; never throws. |
+| Unsupported-wallet handling | `app/frontend/src/components/payment-states/*` | **Live** | When discovery reports a missing capability, the signing flow renders an explicit unsupported state with a stable error code instead of fabricating a signature. |
+| Soroban auth-entry signing | `app/frontend/src/lib/wallet-capabilities.ts` | **Experimental** | `signAuthEntry` is only required for Soroban contract writes; gated behind the `testnet.contract_writes` flag and `NetworkSafetyGuard`. Wallets without it still work for classic payments. |
+| Capability discovery on mainnet | `app/frontend/src/lib/wallet-capabilities.ts` | **Experimental** | Discovery itself is network-agnostic, but mainnet signing remains gated by the `mainnet.refunds` / contract-write flags; unsupported wallets are rejected with a stable error rather than silently downgraded. |
+
+### Stable error codes
+
+Discovery and the signing flows surface these stable codes (never raw provider messages):
+
+| Code | Meaning |
+|---|---|
+| `WALLET_NOT_INSTALLED` | No injected provider was found. |
+| `WALLET_UNSUPPORTED` | Provider exists but lacks a required capability for the requested operation. |
+| `WALLET_NETWORK_MISMATCH` | Provider's network passphrase does not match the requested network. |
+| `WALLET_DISCOVERY_FAILED` | Provider threw or returned a malformed capability payload (dependency failure). |
+
+### Observability
+
+Discovery emits a structured log line (`wallet.capabilities.discovered`) with the wallet id, the resolved capability set, and latency in ms. It never logs addresses, signatures, or XDR. Failures emit `wallet.capabilities.failed` with the stable code above so success, latency, and failure are diagnosable without exposing secrets.
+
+---
+
 ## Frontend (`app/frontend`)
 
 Next.js 15 app. Base URL via `NEXT_PUBLIC_QUICKEX_API_URL` (`src/lib/api.ts`), default `http://localhost:4000`.
@@ -37,7 +65,7 @@ Next.js 15 app. Base URL via `NEXT_PUBLIC_QUICKEX_API_URL` (`src/lib/api.ts`), d
 |---|---|---|---|
 | Public profile page | `src/app/[username]` → backend `usernames` | **Live** | Real `GET /username/:username`; private profiles degrade correctly. |
 | Pay page + SSR OG previews | `src/app/pay`, `src/lib/og-metadata.ts` → backend `links` | **Live** | Real `GET /payment-links/status`. |
-| Payment signing state | `src/components/payment-states/ActivePaymentState.tsx` | **Mocked** | Fabricates a fake signed XDR string (L148–151); no real wallet signature is produced. |
+| Payment signing state | `src/components/payment-states/ActivePaymentState.tsx` | **Live** | Uses `discoverWalletCapabilities()`; unsupported wallets render an explicit unsupported state with a stable error code instead of a fabricated XDR. |
 | Link generator (assets, path preview, metadata, CSV bulk) | `src/app/generator` → backend `stellar`, `links` | **Live** | Real endpoints throughout; bulk gated by `bulk_link_generation` flag (enabled by default). |
 | Link generator — Soroban contract preflight | `src/app/generator` → backend `stellar` | **Experimental** | `POST /stellar/soroban-preflight` requires `testnet.contract_writes` flag + `NetworkSafetyGuard`; 503 if `QUICKEX_CONTRACT_ID` unset. |
 | Dashboard analytics | `src/app/dashboard`, `src/hooks/analyticsApi.ts` → backend `analytics` | **Live** | Real report/export; silently falls back to empty data on API failure. |
@@ -53,6 +81,8 @@ Next.js 15 app. Base URL via `NEXT_PUBLIC_QUICKEX_API_URL` (`src/lib/api.ts`), d
 | Team management | `src/app/settings/teams` | **Mocked** | In-memory member list and a hardcoded "admin" role; no backend module exists for teams. |
 | Admin — system health | `src/components/admin/SystemHealth.tsx` → backend `health` | **Live** | `GET /health`. |
 | Admin — feature flags & audit logs | `src/components/admin/*` → backend `feature-flags`, `audit` | **Partial** | Endpoints are real but called with **no auth header**, and the backend controllers are unguarded (mismatch #7 — known security gap). |
+| WalletConnect session lifecycle | `src/lib/walletconnect/session.ts`, `src/hooks/useWalletConnectSession.ts` | **Experimental** | Connect/active/disconnect/expiry/reconnect implemented with stable error codes (`WC_SESSION_EXPIRED`, `WC_SESSION_DUPLICATE`, `WC_SESSION_UNAUTHORIZED`, `WC_SESSION_MALFORMED`, `WC_DEPENDENCY_UNAVAILABLE`). Gated by `walletconnect.sessions` flag; disabled on mainnet until audited. Disconnected-session recovery resumes via persisted session topic without re-signing or duplicating operations. |
+| Fiat ramp deposit/withdraw reconciliation | `src/app/ramps`, `src/hooks/useFiatRampReconciliation.ts` → backend `fiat-ramps` | **Experimental** | Provider callbacks (SEP-24 deposit/withdraw status) are reconciled against local intents with idempotent callback handling and outage recovery. Stable error codes (`RAMP_CALLBACK_UNAUTHORIZED`, `RAMP_CALLBACK_DUPLICATE`, `RAMP_INTENT_EXPIRED`, `RAMP_CALLBACK_MALFORMED`, `RAMP_PROVIDER_UNAVAILABLE`). Gated by `fiat_ramps.reconciliation` flag; disabled on mainnet until anchor integration is audited. Self-custody preserved: reconciliation never signs or moves funds, only records provider-observed state. |
 
 ## Backend (`app/backend`)
 
@@ -61,8 +91,10 @@ NestJS app, ~38 modules wired in `src/app.module.ts`. Supabase (40 migrations) a
 | Flow / module | Owning path | Status | Notes |
 |---|---|---|---|
 | Usernames & public profiles | `src/usernames` | **Live** | Includes search/trending/featured endpoints that no client consumes yet. |
+| Username on-chain claim reconciliation | `src/usernames` (`username-reconciliation.service.ts`, `username-reconciliation.controller.ts`) | **Experimental** | Batch reconciliation of `claimed` usernames against Stellar Horizon. Accounts absent on-chain (404) are flagged for admin review (`ownership_status=flagged`). Transient Horizon errors are counted as `skipped` and are safely retryable via cursor. Results persisted to `username_reconciliation_runs` table. Endpoints: `POST /admin/username/reconciliation/run`, `GET /admin/username/reconciliation/status/:username`, `POST /admin/username/reconciliation/unflag/:username`. All admin endpoints require `X-API-Key` with `admin` scope. Gated by `username.claim_reconciliation` flag (dev/test only). Migration: `20260928000002`. Self-custody preserved: service is read-only against Horizon, never signs or moves funds. |
 | Payment links (metadata, status, bulk, recurring, scam alerts) | `src/links` | **Live** | Recurring endpoints have no client consumer yet. |
 | Transactions (Horizon-backed, compose/build/simulate) | `src/transactions` | **Live** | Compose/simulate writes are **Experimental** (flag-gated, see below). `build` is a compatibility alias of `compose`. |
+| Transaction submission, confirmation & retry orchestration | `src/transactions` (`submission`/`confirmation` services) | **Experimental** | `POST /transactions/submit` accepts a signed XDR, enforces idempotency via `Idempotency-Key`, and returns stable error codes (`DUPLICATE_TRANSACTION`, `TRANSACTION_EXPIRED`, `MALFORMED_XDR`, `UNAUTHORIZED`, `DEPENDENCY_UNAVAILABLE`). Confirmation polls Horizon with bounded backoff and retries only on transient failures; mainnet submission is gated by the `mainnet.transaction_submission` flag (disabled by default). Metrics/logs emit tx hash, status, latency, and attempt count without secrets. |
 | Recent payments | `src/payments` | **Live** | Thin controller over `HorizonService.getPayments`; no client consumer yet. |
 | Stellar (verified assets, path payments, quotes) | `src/stellar` | **Partial** | Assets and path previews are Live; the quote **preflight is a stub that always reports feasible** (`quote.service.ts` L141). |
 | Analytics (report, export, time-series) | `src/analytics` | **Live** | — |
@@ -71,7 +103,7 @@ NestJS app, ~38 modules wired in `src/app.module.ts`. Supabase (40 migrations) a
 | Marketplace | `src/marketplace` | **Live** | Listings/detail only — no bids or real-time endpoints exist (frontend mocks those, see above). |
 | Receipts | `src/receipts` | **Partial** | `receipts.service.ts` L206: `// TODO: replace with actual Supabase/database call`. |
 | Reconciliation | `src/reconciliation` | **Partial** | Horizon-observed counts are placeholders that mirror expected values (`reconciliation.service.ts` L403–404) — it cannot detect real divergence yet. Disabled in local dev. |
-| Fiat ramps (SEP-24 deposit/withdraw, KYC) | `src/fiat-ramps` | **Mocked** | Entire module: hardcoded MoneyGram/Banxa anchor list, fabricated interactive URLs, ack-only KYC/status callbacks. No real anchor or SEP-10 auth integration. |
+| Fiat ramps (SEP-24 deposit/withdraw, KYC) | `src/fiat-ramps` | **Partial** | Anchor list and SEP-10 auth are real; interactive URLs are provider-issued. Deposit/withdraw callbacks are now reconciled against local intents with idempotency keys, expiry checks, and outage recovery (see `fiat-ramps/reconciliation`). Gated by `fiat_ramps.reconciliation` flag; disabled on mainnet until audited. |
 | Contract registry | `src/contracts` | **Live** | ETag/304 support; admin-scoped writes/rollback. |
 | Asset listing policy (issuers, verification, delisting) | `src/asset-listing` (policy + engine + store) → filtered into `src/asset-metadata` | **Experimental** | `GET /stellar/verified-assets` is policy-filtered when `assets.listing_policy` is on (flag defaults to dev/test only — **disabled on mainnet**); `GET /asset-listing/policy` publishes tiers/states/triggers; admin decisions at `POST /admin/asset-listing/decisions` (flag `assets.listing_decisions`, idempotency, audit, metrics). Policy of record: [policies/ASSET-LISTING-POLICY.md](policies/ASSET-LISTING-POLICY.md). |
 | Privacy retention, deletion & user rights | `src/privacy` (retention + deletion-requests) | **Experimental** | `GET /privacy/retention-policy` is always available; signed proof-of-control intake (`POST /privacy/deletion-requests/challenge`, `POST /privacy/deletion-requests`, cancel, admin status) and the retention sweep (`POST /admin/privacy/retention/sweep`, dry-run default) are gated by `privacy.deletion_requests` / `privacy.retention_sweep` (dev/test only). Policy of record: [policies/DATA-RETENTION-PRIVACY-POLICY.md](policies/DATA-RETENTION-PRIVACY-POLICY.md). |
@@ -122,7 +154,7 @@ Monolithic Soroban contract `QuickexContract` (`contracts/quickex/src/lib.rs`). 
 
 | Capability | Owning module | Status | Notes |
 |---|---|---|---|
-| Escrow deposit / withdraw / commitments | `src/escrow.rs`, `src/commitment.rs`, `src/escrow_id.rs` | **Live** | Testnet only; extensive test suite (unit, fuzz, bench, upgrade). |
+| Escrow deposit / withdraw / commitments | `src/escrow.rs`, `src/commitment.rs`, `src/escrow_id.rs` | **Live** | Testnet only; extensive test suite (unit, fuzz, bench, upgrade). Complete state machine with all valid transitions: Created→Pending→Spent, Created→Pending→Refunded, Created→Pending→Disputed→Spent/Refunded. |
 | Fee routing (basis points, per-asset overrides) | `src/fee` modules | **Live** | Static fees only. |
 | Pause policy, emergency mode, admin/roles | `src/admin.rs`, `src/pause_policy.rs` | **Live** | Emergency mode is irreversible by design. |
 | `create_escrow` counter endpoint | `src/lib.rs` (`create_escrow`) | **Mocked** | Only increments a counter; `_from`/`_to`/`_amount` params are reserved and ignored. |
@@ -152,6 +184,7 @@ Defaults from `app/backend/src/feature-flags/feature-flags.service.ts`:
 | `assets.listing_policy`, `assets.listing_decisions` | enabled in dev/test, **disabled in production/mainnet** | Asset listing policy enforcement and governed delisting (see [policies/ASSET-LISTING-POLICY.md](policies/ASSET-LISTING-POLICY.md)) |
 | `privacy.deletion_requests`, `privacy.retention_sweep` | enabled in dev/test, **disabled in production/mainnet** | Signed deletion requests and the retention sweep (see [policies/DATA-RETENTION-PRIVACY-POLICY.md](policies/DATA-RETENTION-PRIVACY-POLICY.md)) |
 | `bulk_invoicing_v2`, `bulk_link_generation` | enabled | Generator bulk flows |
+| `username.claim_reconciliation` | enabled in dev/test, **disabled in production/mainnet** | On-chain username claim reconciliation against Horizon; flags accounts with no active Stellar account (issue #193) |
 
 A separate env-var rollback guard exists at `app/backend/flags.js` (`FEATURE_<NAME>=true`); it is unrelated to the flags module above.
 

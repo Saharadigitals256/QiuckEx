@@ -28,17 +28,14 @@ export class MetricsService implements OnModuleInit {
   private abuseSignalsByOutcome: client.Counter<string>;
   private abuseScoresHistogram: client.Histogram<string>;
   private paymentLinksExpired: client.Counter<string>;
-  private assetListingDecisionsTotal: client.Counter<string>;
-  private assetListingDecisionDuration: client.Histogram<string>;
-  private assetListingAssetsServed: client.Gauge<string>;
-  private assetListingAssetsSuspended: client.Gauge<string>;
-  private assetListingPolicyDenials: client.Counter<string>;
-  private deletionRequestsTotal: client.Counter<string>;
-  private deletionRequestDuration: client.Histogram<string>;
-  private deletionProofFailures: client.Counter<string>;
-  private retentionSweepRecords: client.Counter<string>;
-  private retentionSweepDuration: client.Histogram<string>;
-  private retentionRecordsDue: client.Gauge<string>;
+  // Escrow state transition metrics
+  private escrowStateTransitions: client.Counter<string>;
+  private escrowStateTransitionDuration: client.Histogram<string>;
+  private escrowFinalizedTotal: client.Counter<string>;
+  private escrowRefundedTotal: client.Counter<string>;
+  private escrowDisputedTotal: client.Counter<string>;
+  private escrowExtendedTotal: client.Counter<string>;
+  private escrowCleanedTotal: client.Counter<string>;
   private initialized = false;
 
   onModuleInit() {
@@ -191,74 +188,48 @@ export class MetricsService implements OnModuleInit {
         help: "Total number of payment links marked as expired by the expiry sweep",
       });
 
-      // ── Governance capabilities (issues #306, #307) ──────────────────────
-      this.assetListingDecisionsTotal = new client.Counter({
-        name: "asset_listing_decisions_total",
-        help: "Total governed asset listing decisions",
-        labelNames: ["action", "outcome", "tier"],
+      // Escrow state transition metrics
+      this.escrowStateTransitions = new client.Counter({
+        name: "escrow_state_transitions_total",
+        help: "Total number of escrow state transitions",
+        labelNames: ["from_state", "to_state", "trigger"],
       });
 
-      this.assetListingDecisionDuration = new client.Histogram({
-        name: "asset_listing_decision_duration_seconds",
-        help: "Duration of asset listing decision handling in seconds",
-        labelNames: ["action"],
-        buckets: [0.005, 0.01, 0.05, 0.1, 0.5, 1, 2],
+      this.escrowStateTransitionDuration = new client.Histogram({
+        name: "escrow_state_transition_duration_seconds",
+        help: "Duration of escrow state transitions in seconds",
+        labelNames: ["from_state", "to_state", "trigger"],
+        buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10],
       });
 
-      this.assetListingAssetsServed = new client.Gauge({
-        name: "asset_listing_assets_served",
-        help: "Number of assets currently served to clients, by listing tier",
-        labelNames: ["tier"],
+      this.escrowFinalizedTotal = new client.Counter({
+        name: "escrow_finalized_total",
+        help: "Total number of escrows finalized (spent)",
+        labelNames: ["trigger"], // withdraw, resolve_dispute, resolve_dispute_multi_sig
       });
 
-      this.assetListingAssetsSuspended = new client.Gauge({
-        name: "asset_listing_assets_suspended",
-        help: "Number of suspended assets, by trigger",
-        labelNames: ["trigger"],
+      this.escrowRefundedTotal = new client.Counter({
+        name: "escrow_refunded_total",
+        help: "Total number of escrows refunded",
+        labelNames: ["trigger"], // refund, finalize_expired_escrow, resolve_dispute
       });
 
-      this.assetListingPolicyDenials = new client.Counter({
-        name: "asset_listing_policy_denials_total",
-        help: "Asset listing decisions rejected by policy (validation, authorization or registry failure)",
-        labelNames: ["reason"],
+      this.escrowDisputedTotal = new client.Counter({
+        name: "escrow_disputed_total",
+        help: "Total number of escrows entering dispute state",
+        labelNames: ["trigger"], // dispute
       });
 
-      this.deletionRequestsTotal = new client.Counter({
-        name: "deletion_requests_total",
-        help: "Total privacy deletion requests by status and deletion method",
-        labelNames: ["status", "method"],
+      this.escrowExtendedTotal = new client.Counter({
+        name: "escrow_extended_total",
+        help: "Total number of escrow expiry extensions",
+        labelNames: ["trigger"], // extend_escrow_expiry
       });
 
-      this.deletionRequestDuration = new client.Histogram({
-        name: "deletion_request_duration_seconds",
-        help: "Duration of privacy deletion request phases (proof, schedule, execute)",
-        labelNames: ["phase"],
-        buckets: [0.005, 0.05, 0.5, 1, 5, 30],
-      });
-
-      this.deletionProofFailures = new client.Counter({
-        name: "deletion_proof_failures_total",
-        help: "Deletion request proof failures (never carries the attempted signature)",
-        labelNames: ["reason"],
-      });
-
-      this.retentionSweepRecords = new client.Counter({
-        name: "retention_sweep_records_total",
-        help: "Records processed by a retention sweep, by category, method and outcome",
-        labelNames: ["category", "method", "outcome"],
-      });
-
-      this.retentionSweepDuration = new client.Histogram({
-        name: "retention_sweep_duration_seconds",
-        help: "Duration of retention sweeps in seconds",
-        labelNames: ["mode"],
-        buckets: [0.05, 0.5, 1, 5, 30, 120],
-      });
-
-      this.retentionRecordsDue = new client.Gauge({
-        name: "retention_records_due",
-        help: "Records past their retention window and awaiting deletion, by category",
-        labelNames: ["category"],
+      this.escrowCleanedTotal = new client.Counter({
+        name: "escrow_cleaned_total",
+        help: "Total number of escrows cleaned up (storage reclaimed)",
+        labelNames: ["status"], // spent, refunded
       });
 
       this.register.registerMetric(this.httpRequestDuration);
@@ -285,17 +256,14 @@ export class MetricsService implements OnModuleInit {
       this.register.registerMetric(this.abuseSignalsByOutcome);
       this.register.registerMetric(this.abuseScoresHistogram);
       this.register.registerMetric(this.paymentLinksExpired);
-      this.register.registerMetric(this.assetListingDecisionsTotal);
-      this.register.registerMetric(this.assetListingDecisionDuration);
-      this.register.registerMetric(this.assetListingAssetsServed);
-      this.register.registerMetric(this.assetListingAssetsSuspended);
-      this.register.registerMetric(this.assetListingPolicyDenials);
-      this.register.registerMetric(this.deletionRequestsTotal);
-      this.register.registerMetric(this.deletionRequestDuration);
-      this.register.registerMetric(this.deletionProofFailures);
-      this.register.registerMetric(this.retentionSweepRecords);
-      this.register.registerMetric(this.retentionSweepDuration);
-      this.register.registerMetric(this.retentionRecordsDue);
+      // Escrow state transition metrics
+      this.register.registerMetric(this.escrowStateTransitions);
+      this.register.registerMetric(this.escrowStateTransitionDuration);
+      this.register.registerMetric(this.escrowFinalizedTotal);
+      this.register.registerMetric(this.escrowRefundedTotal);
+      this.register.registerMetric(this.escrowDisputedTotal);
+      this.register.registerMetric(this.escrowExtendedTotal);
+      this.register.registerMetric(this.escrowCleanedTotal);
 
       this.initialized = true;
     } catch (error) {
@@ -549,89 +517,66 @@ export class MetricsService implements OnModuleInit {
     } catch (error) {}
   }
 
-  // ── Governance metrics (issues #306, #307) ───────────────────────────────
-
-  recordAssetListingDecision(
-    action: string,
-    outcome: "applied" | "rejected" | "replayed",
-    tier: string,
-    durationSeconds: number,
+  // Escrow state transition metrics
+  recordEscrowStateTransition(
+    fromState: string,
+    toState: string,
+    trigger: string,
+    durationSeconds?: number,
   ) {
-    if (!this.initialized) return;
+    if (!this.initialized || !this.escrowStateTransitions) {
+      return;
+    }
     try {
-      this.assetListingDecisionsTotal?.labels(action, outcome, tier).inc();
-      this.assetListingDecisionDuration?.labels(action).observe(durationSeconds);
+      this.escrowStateTransitions.labels(fromState, toState, trigger).inc();
+      if (durationSeconds !== undefined && this.escrowStateTransitionDuration) {
+        this.escrowStateTransitionDuration.labels(fromState, toState, trigger).observe(durationSeconds);
+      }
     } catch (error) {}
   }
 
-  setAssetListingServedAssets(tier: string, count: number) {
-    if (!this.initialized || !this.assetListingAssetsServed) return;
+  recordEscrowFinalized(trigger: "withdraw" | "resolve_dispute" | "resolve_dispute_multi_sig") {
+    if (!this.initialized || !this.escrowFinalizedTotal) {
+      return;
+    }
     try {
-      this.assetListingAssetsServed.labels(tier).set(count);
+      this.escrowFinalizedTotal.labels(trigger).inc();
     } catch (error) {}
   }
 
-  recordAssetListingSuspendedAsset(trigger: string) {
-    if (!this.initialized || !this.assetListingAssetsSuspended) return;
+  recordEscrowRefunded(trigger: "refund" | "finalize_expired_escrow" | "resolve_dispute") {
+    if (!this.initialized || !this.escrowRefundedTotal) {
+      return;
+    }
     try {
-      this.assetListingAssetsSuspended.labels(trigger).inc();
+      this.escrowRefundedTotal.labels(trigger).inc();
     } catch (error) {}
   }
 
-  recordAssetListingPolicyDenial(reason: string) {
-    if (!this.initialized || !this.assetListingPolicyDenials) return;
+  recordEscrowDisputed(trigger: "dispute") {
+    if (!this.initialized || !this.escrowDisputedTotal) {
+      return;
+    }
     try {
-      this.assetListingPolicyDenials.labels(reason).inc();
+      this.escrowDisputedTotal.labels(trigger).inc();
     } catch (error) {}
   }
 
-  recordDeletionRequest(status: string, method: string) {
-    if (!this.initialized || !this.deletionRequestsTotal) return;
+  recordEscrowExtended(trigger: "extend_escrow_expiry") {
+    if (!this.initialized || !this.escrowExtendedTotal) {
+      return;
+    }
     try {
-      this.deletionRequestsTotal.labels(status, method).inc();
+      this.escrowExtendedTotal.labels(trigger).inc();
     } catch (error) {}
   }
 
-  observeDeletionRequestPhase(
-    phase: "proof" | "schedule" | "execute",
-    durationSeconds: number,
-  ) {
-    if (!this.initialized || !this.deletionRequestDuration) return;
+  recordEscrowCleaned(status: "spent" | "refunded") {
+    if (!this.initialized || !this.escrowCleanedTotal) {
+      return;
+    }
     try {
-      this.deletionRequestDuration.labels(phase).observe(durationSeconds);
-    } catch (error) {}
-  }
-
-  recordDeletionProofFailure(reason: "expired" | "unknown" | "invalid_signature") {
-    if (!this.initialized || !this.deletionProofFailures) return;
-    try {
-      this.deletionProofFailures.labels(reason).inc();
-    } catch (error) {}
-  }
-
-  recordRetentionSweepRecord(
-    category: string,
-    method: string,
-    outcome: "deleted" | "narrowed" | "retained" | "failed",
-    count = 1,
-  ) {
-    if (!this.initialized || !this.retentionSweepRecords) return;
-    try {
-      this.retentionSweepRecords.labels(category, method, outcome).inc(count);
-    } catch (error) {}
-  }
-
-  observeRetentionSweepDuration(mode: "dry_run" | "apply", durationSeconds: number) {
-    if (!this.initialized || !this.retentionSweepDuration) return;
-    try {
-      this.retentionSweepDuration.labels(mode).observe(durationSeconds);
-    } catch (error) {}
-  }
-
-  setRetentionRecordsDue(category: string, count: number) {
-    if (!this.initialized || !this.retentionRecordsDue) return;
-    try {
-      this.retentionRecordsDue.labels(category).set(count);
+      this.escrowCleanedTotal.labels(status).inc();
     } catch (error) {}
   }
 }

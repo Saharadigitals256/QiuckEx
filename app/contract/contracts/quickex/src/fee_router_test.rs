@@ -298,7 +298,7 @@ fn test_route_payout_price_aware_no_oracle_uses_static_bps() {
     // Perform a deposit+withdraw using price-aware path
     let amount: i128 = 10_000;
     let salt = Bytes::from_slice(&env, b"price_no_oracle");
-    let commitment = client.deposit(&token, &amount, &user, &salt, &0, &None, &0u64, &u64::MAX);
+    let commitment = client.deposit(&token, &amount, &user, &salt, &0, &None, &None, &0u64, &u64::MAX);
     client.withdraw(&token, &amount, &commitment, &user, &salt, &0u64, &u64::MAX);
 
     // No oracle → static 5% → 500 fee
@@ -334,7 +334,7 @@ fn test_route_payout_price_aware_fresh_oracle_uses_dynamic() {
     // Dynamic fee = 50_000
     let amount: i128 = 100_000;
     let salt = Bytes::from_slice(&env, b"price_fresh_oracle");
-    let commitment = client.deposit(&token, &amount, &user, &salt, &0, &None, &0u64, &u64::MAX);
+    let commitment = client.deposit(&token, &amount, &user, &salt, &0, &None, &None, &0u64, &u64::MAX);
     client.withdraw(&token, &amount, &commitment, &user, &salt, &0u64, &u64::MAX);
 
     assert_eq!(token_client.balance(&collector), 50_000);
@@ -370,7 +370,7 @@ fn test_route_payout_price_aware_stale_oracle_rejects() {
     // Withdrawal via price-aware path should reject
     let amount: i128 = 100_000;
     let salt = Bytes::from_slice(&env, b"price_stale_reject");
-    let commitment = client.deposit(&token, &amount, &user, &salt, &0, &None, &0u64, &u64::MAX);
+    let commitment = client.deposit(&token, &amount, &user, &salt, &0, &None, &None, &0u64, &u64::MAX);
     let result = client.try_withdraw(&token, &amount, &commitment, &user, &salt, &0u64, &u64::MAX);
 
     match result {
@@ -404,7 +404,7 @@ fn test_route_payout_price_aware_no_oracle_price_rejects() {
 
     let amount: i128 = 100_000;
     let salt = Bytes::from_slice(&env, b"price_no_cache");
-    let commitment = client.deposit(&token, &amount, &user, &salt, &0, &None, &0u64, &u64::MAX);
+    let commitment = client.deposit(&token, &amount, &user, &salt, &0, &None, &None, &0u64, &u64::MAX);
     let result = client.try_withdraw(&token, &amount, &commitment, &user, &salt, &0u64, &u64::MAX);
 
     match result {

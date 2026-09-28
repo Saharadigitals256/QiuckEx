@@ -13,6 +13,7 @@ import { AuditService } from '../audit/audit.service';
 import {
   CONTRACT_WRITES_DISABLED_CODE,
   CONTRACT_WRITES_DISABLED_MESSAGE,
+  MAINNET_DISPUTE_ACTIONS_FLAG,
   TESTNET_CONTRACT_WRITES_FLAG,
 } from './contract-write-kill-switch.constants';
 import { FeatureFlagsService } from './feature-flags.service';
@@ -77,6 +78,39 @@ export class NetworkSafetyGuard implements CanActivate {
         flag: flagKey,
         reason: result.reason,
         message: CONTRACT_WRITES_DISABLED_MESSAGE,
+      });
+    }
+
+    if (flagKey === MAINNET_DISPUTE_ACTIONS_FLAG) {
+      if (this.config.isTestnet) return true;
+
+      const result = await this.flags.evaluateFlagFresh(flagKey, { userId });
+
+      if (result.enabled) return true;
+
+      await this.audit.log(
+        userId ?? 'anonymous',
+        'network_safety_gate.blocked',
+        flagKey,
+        {
+          reason: result.reason,
+          network: this.config.network,
+          path: req.path,
+          method: req.method,
+        },
+      );
+
+      this.logger.warn(
+        `NetworkSafetyGuard blocked ${req.method} ${req.path} ` +
+          `(flag=${flagKey} reason=${result.reason} network=mainnet)`,
+      );
+
+      throw new ServiceUnavailableException({
+        code: DISPUTE_ACTIONS_DISABLED_CODE,
+        error: DISPUTE_ACTIONS_DISABLED_CODE,
+        flag: flagKey,
+        reason: result.reason,
+        message: DISPUTE_ACTIONS_DISABLED_MESSAGE,
       });
     }
 

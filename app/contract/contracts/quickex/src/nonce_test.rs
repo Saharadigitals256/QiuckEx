@@ -361,9 +361,10 @@ mod tests {
             let v1_key = NonceKey::UsedV1(signer.clone(), 99);
             ctx.env.storage().persistent().set(&v1_key, &true);
 
-            // The v2 check for the same (signer, nonce, action) should NOT
-            // see the v1 key — different storage discriminants.
-            assert!(!is_nonce_used(&ctx.env, &signer, 99, ActionType::Withdraw));
+            // The v2 compatibility gate must treat the legacy nonce as consumed.
+            assert!(is_nonce_used(&ctx.env, &signer, 99, ActionType::Withdraw));
+            let result = verify_and_consume(&ctx.env, &signer, 99, 2_000_000, ActionType::Refund);
+            assert_eq!(result, Err(QuickexError::NonceAlreadyUsed));
 
             // But the v1 key is still independently readable.
             assert!(ctx.env.storage().persistent().has(&v1_key));

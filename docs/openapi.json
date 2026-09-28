@@ -114,6 +114,34 @@
     {
       "name": "feature-flags",
       "description": "Feature flag evaluation and admin management"
+    },
+    {
+      "name": "contacts",
+      "description": "Address-book contacts for the signed-in user."
+    },
+    {
+      "name": "crash-reporting",
+      "description": "User-controlled crash report export and retention settings."
+    },
+    {
+      "name": "dashboard-feed",
+      "description": "Aggregated activity feed for the web dashboard."
+    },
+    {
+      "name": "manifests",
+      "description": "Contract manifest comparison."
+    },
+    {
+      "name": "teams",
+      "description": "Team membership, invites, and ownership transfer."
+    },
+    {
+      "name": "transaction-timeline",
+      "description": "Per-transaction activity timeline."
+    },
+    {
+      "name": "indexer",
+      "description": "Soroban event indexer maintenance and replay."
     }
   ],
   "security": [
@@ -257,8 +285,8 @@
           "400": {
             "$ref": "#/components/responses/BadRequest"
           },
-          "409": {
-            "description": "Username already taken",
+          "403": {
+            "description": "Wallet has reached maximum usernames",
             "content": {
               "application/json": {
                 "schema": {
@@ -267,8 +295,8 @@
               }
             }
           },
-          "403": {
-            "description": "Wallet has reached maximum usernames",
+          "409": {
+            "description": "Username already taken",
             "content": {
               "application/json": {
                 "schema": {
@@ -3625,6 +3653,755 @@
           }
         }
       }
+    },
+    "/contacts": {},
+    "/contacts/:id": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "patch": {
+        "tags": [
+          "contacts"
+        ],
+        "operationId": "updateContact",
+        "summary": "Update a contact",
+        "description": "Renames or re-addresses a stored contact. The contact list is per user.",
+        "responses": {
+          "200": {
+            "description": "Contact updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Contact"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Contact not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "contacts"
+        ],
+        "operationId": "deleteContact",
+        "summary": "Delete a contact",
+        "description": "Removes a contact from the signed-in user address book.",
+        "responses": {
+          "204": {
+            "description": "Contact deleted"
+          },
+          "404": {
+            "description": "Contact not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/crash-reporting/settings/{userId}": {
+      "parameters": [
+        {
+          "name": "userId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "crash-reporting"
+        ],
+        "operationId": "getCrashReportingSettings",
+        "summary": "Read crash-reporting settings",
+        "description": "Returns whether crash reporting is enabled for a user.",
+        "responses": {
+          "200": {
+            "description": "Settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrashReportingSettings"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "crash-reporting"
+        ],
+        "operationId": "updateCrashReportingSettings",
+        "summary": "Update crash-reporting settings",
+        "description": "Enables or disables crash reporting for a user.",
+        "responses": {
+          "200": {
+            "description": "Settings updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrashReportingSettings"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/crash-reporting/export/{userId}": {
+      "parameters": [
+        {
+          "name": "userId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "crash-reporting"
+        ],
+        "operationId": "exportCrashReports",
+        "summary": "Export stored crash reports",
+        "description": "Streams the stored crash reports for a user as a downloadable export.",
+        "responses": {
+          "200": {
+            "description": "Export produced"
+          },
+          "404": {
+            "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/crash-reporting/reports/{userId}": {
+      "parameters": [
+        {
+          "name": "userId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "crash-reporting"
+        ],
+        "operationId": "listCrashReports",
+        "summary": "List crash reports",
+        "description": "Lists stored crash reports for a user, newest first.",
+        "responses": {
+          "200": {
+            "description": "Reports",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrashReportList"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/dashboard-feed": {
+      "get": {
+        "tags": [
+          "dashboard-feed"
+        ],
+        "operationId": "getDashboardFeed",
+        "summary": "Dashboard activity feed",
+        "description": "Returns the recent cross-module activity shown on the dashboard.",
+        "responses": {
+          "200": {
+            "description": "Feed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardFeed"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/manifests/diff": {
+      "post": {
+        "tags": [
+          "manifests"
+        ],
+        "operationId": "diffManifests",
+        "summary": "Diff two contract manifests",
+        "description": "Compares two contract manifests and returns their differences.",
+        "responses": {
+          "200": {
+            "description": "Difference",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManifestDiff"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed manifest",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/teams/join": {
+      "post": {
+        "tags": [
+          "teams"
+        ],
+        "operationId": "joinTeam",
+        "summary": "Join a team via invite link",
+        "description": "Redeems an invite link and adds the caller as a team member.",
+        "responses": {
+          "201": {
+            "description": "Joined",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Team"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Invite not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/teams/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "teams"
+        ],
+        "operationId": "getTeam",
+        "summary": "Get a team",
+        "description": "Returns a team by id.",
+        "responses": {
+          "200": {
+            "description": "Team",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Team"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Team not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "teams"
+        ],
+        "operationId": "deleteTeam",
+        "summary": "Delete a team",
+        "description": "Deletes a team and its membership records.",
+        "responses": {
+          "204": {
+            "description": "Team deleted"
+          },
+          "404": {
+            "description": "Team not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/teams/{id}/members": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "teams"
+        ],
+        "operationId": "listTeamMembers",
+        "summary": "List team members",
+        "description": "Lists members of a team and their roles.",
+        "responses": {
+          "200": {
+            "description": "Members",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamMemberList"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Team not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "teams"
+        ],
+        "operationId": "addTeamMember",
+        "summary": "Add a team member",
+        "description": "Adds a member to a team by public key.",
+        "responses": {
+          "201": {
+            "description": "Member added",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamMember"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Team not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/teams/{id}/members/{memberId}/role": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "memberId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "put": {
+        "tags": [
+          "teams"
+        ],
+        "operationId": "setTeamMemberRole",
+        "summary": "Set a member role",
+        "description": "Changes a team member role.",
+        "responses": {
+          "200": {
+            "description": "Role updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamMember"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Member not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/teams/{id}/members/{memberId}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "memberId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "delete": {
+        "tags": [
+          "teams"
+        ],
+        "operationId": "removeTeamMember",
+        "summary": "Remove a team member",
+        "description": "Removes a member from a team.",
+        "responses": {
+          "204": {
+            "description": "Member removed"
+          },
+          "404": {
+            "description": "Member not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/teams/{id}/invite-link": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "teams"
+        ],
+        "operationId": "createTeamInviteLink",
+        "summary": "Create an invite link",
+        "description": "Mints a shareable invite link for the team.",
+        "responses": {
+          "201": {
+            "description": "Invite link",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamInviteLink"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Team not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/teams/{id}/transfer-ownership": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "teams"
+        ],
+        "operationId": "transferTeamOwnership",
+        "summary": "Transfer team ownership",
+        "description": "Transfers ownership to another member. Requires the current owner.",
+        "responses": {
+          "200": {
+            "description": "Ownership transferred",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Team"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not the team owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/transaction-timeline": {
+      "get": {
+        "tags": [
+          "transaction-timeline"
+        ],
+        "operationId": "getTransactionTimeline",
+        "summary": "Transaction timeline",
+        "description": "Returns the ordered activity timeline for a transaction hash.",
+        "responses": {
+          "200": {
+            "description": "Timeline",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransactionTimeline"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Transaction not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/indexer/reindex": {
+      "post": {
+        "tags": [
+          "indexer"
+        ],
+        "operationId": "reindex",
+        "summary": "Re-run the indexer",
+        "description": "Replays Soroban events from a checkpoint. Admin scoped.",
+        "responses": {
+          "202": {
+            "description": "Reindex scheduled"
+          }
+        }
+      }
+    },
+    "/indexer/unparsed-events": {
+      "get": {
+        "tags": [
+          "indexer"
+        ],
+        "operationId": "listUnparsedSorobanEvents",
+        "summary": "List unparsed Soroban events",
+        "description": "Lists events the indexer could not decode, for operator review.",
+        "responses": {
+          "200": {
+            "description": "Events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnparsedSorobanEventList"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/indexer/unparsed-events/replay": {
+      "post": {
+        "tags": [
+          "indexer"
+        ],
+        "operationId": "replayUnparsedSorobanEvents",
+        "summary": "Replay unparsed events",
+        "description": "Replays the stored unparsed events. Admin scoped.",
+        "responses": {
+          "202": {
+            "description": "Replay scheduled"
+          }
+        }
+      }
+    },
+    "/indexer/unparsed-events/replay/batch": {
+      "post": {
+        "tags": [
+          "indexer"
+        ],
+        "operationId": "replayUnparsedSorobanEventsBatch",
+        "summary": "Replay unparsed events in batches",
+        "description": "Replays unparsed events in bounded batches. Admin scoped.",
+        "responses": {
+          "202": {
+            "description": "Replay scheduled"
+          }
+        }
+      }
+    },
+    "/indexer/unparsed-events/{pagingToken}/replay": {
+      "parameters": [
+        {
+          "name": "pagingToken",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "indexer"
+        ],
+        "operationId": "replayUnparsedSorobanEvent",
+        "summary": "Replay a single unparsed event",
+        "description": "Replays one unparsed event by paging token. Admin scoped.",
+        "responses": {
+          "202": {
+            "description": "Replay scheduled"
+          },
+          "404": {
+            "description": "Event not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3993,7 +4770,7 @@
           "amount": {
             "type": "number",
             "example": 50.5,
-            "minimum": 1e-07,
+            "minimum": 1e-7,
             "maximum": 1000000000
           },
           "memo": {
@@ -4156,7 +4933,7 @@
         "properties": {
           "amount": {
             "type": "number",
-            "minimum": 1e-07
+            "minimum": 1e-7
           },
           "asset": {
             "type": "string"
@@ -5302,7 +6079,7 @@
           },
           "askingPrice": {
             "type": "number",
-            "minimum": 1e-07
+            "minimum": 1e-7
           }
         }
       },
@@ -5318,7 +6095,7 @@
           },
           "bidAmount": {
             "type": "number",
-            "minimum": 1e-07
+            "minimum": 1e-7
           }
         }
       },
@@ -5648,6 +6425,172 @@
           "tomlUrl": {
             "type": "string",
             "format": "uri"
+          }
+        }
+      },
+      "Contact": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "address": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "CrashReportingSettings": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "retentionDays": {
+            "type": "integer"
+          }
+        }
+      },
+      "CrashReportList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "DashboardFeed": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "generatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ManifestDiff": {
+        "type": "object",
+        "properties": {
+          "added": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "removed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "changed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "Team": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "ownerPublicKey": {
+            "type": "string"
+          }
+        }
+      },
+      "TeamMember": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "publicKey": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "admin",
+              "member"
+            ]
+          }
+        }
+      },
+      "TeamMemberList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeamMember"
+            }
+          }
+        }
+      },
+      "TeamInviteLink": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "TransactionTimeline": {
+        "type": "object",
+        "properties": {
+          "transactionHash": {
+            "type": "string"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "UnparsedSorobanEventList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "nextPagingToken": {
+            "type": "string",
+            "nullable": true
           }
         }
       }

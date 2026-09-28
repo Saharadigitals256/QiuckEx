@@ -1,21 +1,20 @@
-# QuickEx API — Error Contract & Troubleshooting Guide
+# Backend Error Codes
 
-Every non-2xx response from the QuickEx backend follows a single JSON shape.
-Clients can rely on this contract for all key flows.
+Stable, machine-readable error codes returned by the QuickEx backend. Clients
+should branch on `code` (never on the human-readable `message`), which is
+considered part of the public API contract.
 
-**Last Updated:** April 2026 | **Version:** 2.0.0
+## Envelope
 
-## Response Shape
+All error responses share the same shape:
 
 ```json
 {
-  "success": false,
   "error": {
-    "code": "ERROR_CODE",
-    "message": "Human-readable description",
-    "request_id": "uuid-v4",
-    "fields": { "fieldName": ["validation message"] },
-    "details": {}
+    "code": "WALLETCONNECT_SESSION_EXPIRED",
+    "message": "WalletConnect session has expired.",
+    "details": { "sessionId": "..." },
+    "requestId": "..."
   }
 }
 ```

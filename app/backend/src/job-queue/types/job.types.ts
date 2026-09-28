@@ -15,6 +15,7 @@ export enum JobType {
   RECONCILIATION = 'reconciliation',
   STELLAR_RECONNECT = 'stellar_reconnect',
   TEMPLATE_EXECUTION = 'template_execution',
+  DERIVED_RECORD_REPAIR = 'derived_record_repair',
 }
 
 /**

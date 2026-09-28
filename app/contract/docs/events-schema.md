@@ -18,7 +18,7 @@ Indexers MUST read this field before decoding any other payload field.
 | Version | Description                                      |
 |---------|--------------------------------------------------|
 | 1       | Original schema – no `schema_version` field      |
-| 2       | Added `schema_version` to every event payload    |
+| 2       | Added `schema_version` to every payload; governance event types are additive |
 
 ### Detecting the version
 
@@ -29,7 +29,7 @@ Indexers MUST read this field before decoding any other payload field.
 
 1. When processing an event, attempt to read `schema_version` from the data map.
 2. If absent → decode with the v1 decoder (legacy path).
-3. If present and `== 2` → decode with the v2 decoder.
+3. If present and `== 2` → decode known events with the v2 decoder; ignore unknown additive event types.
 4. If present and `> 2` → log a warning and skip until the indexer is updated.
 
 The canonical version constant lives in `src/events.rs`:
@@ -107,6 +107,30 @@ accidental breakage.
   - Data: `schema_version`, `timestamp`
 
 ### Admin
+
+- `GovernanceConfigChanged`
+  - Topics: `TOPIC_ADMIN`, `GovernanceConfigChanged`
+  - Data: `schema_version`, `threshold`, `signer_count`, `signers`, `timelock_secs`, `timestamp`
+
+- `GovernanceProposalCreated`
+  - Topics: `TOPIC_ADMIN`, `GovernanceProposalCreated`, `proposal_id`, `proposer`
+  - Data: `schema_version`, `action`, `execute_after`, `timestamp`
+
+- `GovernanceProposalApproved`
+  - Topics: `TOPIC_ADMIN`, `GovernanceProposalApproved`, `proposal_id`, `signer`
+  - Data: `schema_version`, `approval_count`, `timestamp`
+
+- `GovernanceCancellationVote`
+  - Topics: `TOPIC_ADMIN`, `GovernanceCancellationVote`, `proposal_id`, `signer`
+  - Data: `schema_version`, `vote_count`, `threshold`, `timestamp`
+
+- `GovernanceProposalCanceled`
+  - Topics: `TOPIC_ADMIN`, `GovernanceProposalCanceled`, `proposal_id`, `signer`
+  - Data: `schema_version`, `timestamp`
+
+- `GovernanceProposalExecuted`
+  - Topics: `TOPIC_ADMIN`, `GovernanceProposalExecuted`, `proposal_id`
+  - Data: `schema_version`, `timestamp`
 
 - `ContractPaused`
   - Topics: `TOPIC_ADMIN`, `ContractPaused`, `admin`

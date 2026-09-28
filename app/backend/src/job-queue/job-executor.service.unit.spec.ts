@@ -650,6 +650,46 @@ describe('JobExecutor', () => {
       expect(cancellationStore.clearCancellation).toHaveBeenCalledWith('job-1');
     });
 
+    it('should move permanent failures to DLQ without retrying', async () => {
+      const mockJob = createMockJob('job-1', JobType.RECURRING_PAYMENT);
+      mockJob.attempts = 0;
+      repository.findDueJobs.mockResolvedValue([mockJob]);
+
+      const permanentError = Object.assign(new Error('Invalid authorization'), {
+        name: 'PermanentJobError',
+      });
+      const mockHandler = {
+        execute: jest.fn().mockRejectedValue(permanentError),
+        validate: jest.fn().mockResolvedValue(undefined),
+        onFailure: jest.fn().mockResolvedValue(undefined),
+      };
+      registry.getPolicy.mockReturnValue({
+        maxAttempts: 3,
+        backoffStrategy: 'exponential',
+        initialDelayMs: 1000,
+        maxDelayMs: 60000,
+        visibilityTimeoutMs: 300000,
+      });
+      registry.getHandler.mockReturnValue(mockHandler);
+      cancellationStore.createToken.mockReturnValue({
+        isCancelled: jest.fn().mockReturnValue(false),
+        throwIfCancelled: jest.fn(),
+      });
+      repository.updateJobStatus.mockResolvedValue();
+
+      await executor.processDueJobs();
+
+      expect(repository.updateJobStatus).toHaveBeenCalledWith(
+        'job-1',
+        JobStatus.FAILED,
+        expect.objectContaining({
+          attempts: 1,
+          failureReason: 'Invalid authorization',
+        }),
+      );
+      expect(mockHandler.onFailure).toHaveBeenCalledWith(mockJob, permanentError);
+    });
+
     it('should log failure with attempt information', async () => {
       // Arrange
       const mockJob = createMockJob('job-1', JobType.WEBHOOK_DELIVERY);

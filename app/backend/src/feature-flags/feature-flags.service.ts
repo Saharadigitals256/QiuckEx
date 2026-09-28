@@ -189,6 +189,28 @@ const DEFAULT_FLAGS: FeatureFlagRecord[] = [
     updatedAt: new Date(0).toISOString(),
     updatedBy: 'bootstrap',
   },
+  // ── Username on-chain claim reconciliation (issue #193) ──────────────────
+  // Enabled on local/test only. Mainnet enablement requires operational sign-off
+  // and review of Horizon call volume at production scale.
+  {
+    key: 'username.claim_reconciliation',
+    name: 'Username Claim Reconciliation',
+    description:
+      'Enables on-chain username claim reconciliation against Stellar Horizon. ' +
+      'Flags claimed usernames whose owning Stellar account is no longer active.',
+    enabled: true,
+    killSwitch: false,
+    rolloutPercentage: 100,
+    allowedUsers: [],
+    environments: ['development', 'test'],
+    metadata: {
+      batchSize: 50,
+      retryMaxAttempts: 3,
+      retryBaseMs: 500,
+    },
+    updatedAt: new Date(0).toISOString(),
+    updatedBy: 'bootstrap',
+  },
 ];
 
 @Injectable()

@@ -386,6 +386,14 @@ export class AppConfigService {
     return this.configService.get("ABUSE_SIGNAL_HASH_SALT", { infer: true });
   }
 
+  get marketplaceRestrictedUsernames(): string[] {
+    return this.configService
+      .get("MARKETPLACE_RESTRICTED_USERNAMES", { infer: true })
+      .split(",")
+      .map((username) => username.trim().toLowerCase())
+      .filter(Boolean);
+  }
+
   // ====================================================================
   // NEW ACCESSORS FOR BOOTSTRAP PAYLOAD
   // ====================================================================

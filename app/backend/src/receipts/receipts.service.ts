@@ -23,6 +23,7 @@ import {
 } from './normalizers/receipt.normalizer';
 import { NormalizedReceipt } from './schemas/receipt.schema';
 import { GetReceiptByTxDto, GetReceiptsByAddressDto } from './dto/receipt.dto';
+import { SupabaseService } from '../supabase/supabase.service';
 
 @Injectable()
 export class ReceiptsService {
@@ -33,6 +34,7 @@ export class ReceiptsService {
   constructor(
     private readonly normalizer: ReceiptNormalizer,
     private readonly config: ConfigService,
+    private readonly supabase: SupabaseService,
   ) {
     const network = this.config.get<string>('STELLAR_NETWORK', 'testnet');
     this.horizonUrl =
@@ -70,7 +72,38 @@ export class ReceiptsService {
 
     const indexer = await this.fetchIndexerMetadata(txHash);
 
-    return this.normalizer.normalize(op, tx, soroban, indexer);
+    const receipt = this.normalizer.normalize(op, tx, soroban, indexer);
+    await this.persistDerivedReceipt(receipt);
+    return receipt;
+  }
+
+  async repairTransactions(transactionHashes: string[]): Promise<number> {
+    for (const txHash of transactionHashes) {
+      await this.getByTxHash({ txHash });
+    }
+    return transactionHashes.length;
+  }
+
+  private async persistDerivedReceipt(receipt: NormalizedReceipt): Promise<void> {
+    const { error } = await this.supabase
+      .getClient()
+      .from('transaction_receipts')
+      .upsert(
+        {
+          tx_hash: receipt.txHash,
+          network_fee: receipt.fee.baseFeeSatoshis,
+          platform_fee: '0',
+          total_fee: receipt.fee.totalFeeSatoshis,
+          receipt_data: receipt,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'tx_hash' },
+      );
+
+    if (error) {
+      this.logger.error(`Failed to persist receipt ${receipt.txHash}: ${error.message}`);
+      throw error;
+    }
   }
 
   async getByAddress(dto: GetReceiptsByAddressDto): Promise<{

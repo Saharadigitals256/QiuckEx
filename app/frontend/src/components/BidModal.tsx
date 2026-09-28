@@ -5,6 +5,9 @@ import { MarketplaceListing, formatCountdown, placeBid } from "@/hooks/marketpla
 import { resolvePublicKey } from "@/lib/publicKey";
 import { useFocusTrap } from "@/hooks/useFocusTrap";
 import { SigningSummary } from "./SigningSummary";
+import { detectWallets } from "@/lib/wallet/detectWallets";
+import { connectWallet, signMessage } from "@/lib/wallet/walletSigning";
+import { resolvePublicKey } from "@/lib/publicKey";
 
 type BidModalProps = {
   listing: MarketplaceListing | null;
@@ -33,7 +36,18 @@ export function BidModal({ listing, onClose, onBidSuccess }: BidModalProps) {
     setBidState("loading");
     setErrorMsg("");
 
-    const result = await placeBid(listing.id, parsedAmount, resolvePublicKey());
+    const signedAt = Date.now();
+    const bidderPublicKey = resolvePublicKey();
+    const wallet = detectWallets().find((candidate) => candidate.available);
+    if (!wallet) {
+      setBidState("error");
+      setErrorMsg("Connect a Stellar wallet to authorize this bid.");
+      return;
+    }
+    const message = `quickex:marketplace:bid:${listing.id}:${bidderPublicKey}:${parsedAmount}:${signedAt}`;
+    const connectedKey = await connectWallet(wallet.id);
+    const signature = await signMessage(wallet.id, message);
+    const result = await placeBid(listing.id, parsedAmount, signature, signedAt, connectedKey);
     if (result.success) {
       setBidState("success");
       onBidSuccess(listing.username, parsedAmount);

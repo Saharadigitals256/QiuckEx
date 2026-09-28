@@ -140,7 +140,8 @@ required fields.
 
 ### 1. Deployment & initialisation
 1. Deploy the contract WASM.
-2. Call `initialize(admin)` once to set the admin (required for pause, upgrade, admin transfer).
+2. Call `initialize(admin)` once to set the bootstrap admin.
+3. For production, call `initialize_governance(caller, signers, threshold, timelock_secs)` to activate M-of-N governance before configuring funds or production parameters. Once enabled, privileged changes and upgrades require proposals; direct legacy admin calls are rejected.
 
 ### 2. Deposit → Withdraw (escrow)
 1. **Deposit**: Call `deposit(token, amount, owner, salt)` or `deposit_with_commitment(from, token, amount, commitment)`. The owner/from must authorize the token transfer.
@@ -152,11 +153,12 @@ required fields.
 - **Level-based**: `enable_privacy(account, level)`, `privacy_status(account)`, `privacy_history(account)` for numeric levels.
 
 ### 4. Admin
-- `set_paused(caller, new_state)` – pause/unpause (caller must be admin).
-- `set_admin(caller, new_admin)` – transfer admin.
-- `upgrade(caller, new_wasm_hash)` – upgrade contract (caller must authorize).
-- `migrate(caller)` – run post-upgrade storage migration steps for the current release.
+- Before multisig bootstrap, legacy admin entrypoints can pause, transfer admin, and upgrade.
+- After bootstrap, use `propose_governance_action`, `approve_governance_proposal`, and `execute_governance_proposal` for privileged changes, signer rotation, and timelocked upgrades. Cancellation requires M-of-N cancellation votes.
+- `activate_emergency_mode(caller)` remains an immediate, irreversible stop callable by the bootstrap admin or any active governance signer.
 - `get_version()` – inspect the stored schema version (`0` means a legacy deployment with no version key yet).
+
+See [governance and compatibility guarantees](docs/GOVERNANCE_AND_COMPATIBILITY.md) for stable error codes, signer rotation, upgrade cancellation, and CI resource budgets.
 
 ### 5. Read-only queries
 - `get_commitment_state(commitment)` – escrow status (Pending/Spent/Expired).

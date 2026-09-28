@@ -257,8 +257,9 @@ export class JobExecutor implements OnModuleInit {
       stack: error.stack,
     });
 
-    // Check if job has exhausted all retry attempts
-    if (newAttempts >= policy.maxAttempts && policy.maxAttempts > 0) {
+    // Permanent handler errors skip retries; ambiguous payment failures must not be rebroadcast.
+    const permanentFailure = error.name === 'PermanentJobError';
+    if (permanentFailure || (newAttempts >= policy.maxAttempts && policy.maxAttempts > 0)) {
       // Move to DLQ: mark as failed permanently
       await this.repository.updateJobStatus(job.id, JobStatus.FAILED, {
         attempts: newAttempts,
@@ -272,7 +273,7 @@ export class JobExecutor implements OnModuleInit {
       this.metrics.updateJobsDlqCount(job.type, 1);
 
       this.logger.warn(
-        `Job ${job.id} moved to DLQ after ${newAttempts} attempts (type: ${job.type})`,
+        `Job ${job.id} moved to DLQ after ${newAttempts} attempts (type: ${job.type}, permanent: ${permanentFailure})`,
       );
 
       // Call handler's onFailure hook

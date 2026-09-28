@@ -1,4 +1,13 @@
-use soroban_sdk::{testutils::Ledger, Vec};
+use soroban_sdk::{testutils::Ledger, Address, Bytes, BytesN, Env, Vec};
+
+use crate::{
+    storage::{
+        get_escrow, get_escrow_counter, has_escrow, increment_escrow_counter,
+        is_initialized, put_escrow, set_contract_version, set_initialized, CURRENT_CONTRACT_VERSION,
+    },
+    types::{EscrowEntry, EscrowStatus},
+};
+
 #[test]
 fn test_ttl_auto_extend_on_activity() {
     // No need to import Ledger trait; only use set_timestamp
@@ -21,6 +30,8 @@ fn test_ttl_auto_extend_on_activity() {
             arbiter: None,
             arbiters: Vec::new(&env),
             arbiter_threshold: 0,
+        memo: None,
+            milestones: Vec::new(env),
         };
         put_escrow(&env, &commitment, &entry);
 
@@ -55,6 +66,8 @@ fn test_ttl_expiry_of_inactive_record() {
             arbiter: None,
             arbiters: Vec::new(&env),
             arbiter_threshold: 0,
+        memo: None,
+            milestones: Vec::new(env),
         };
         put_escrow(&env, &commitment, &entry);
 
@@ -87,6 +100,8 @@ fn test_cleanup_does_not_remove_active_escrow() {
             arbiter: None,
             arbiters: Vec::new(&env),
             arbiter_threshold: 0,
+        memo: None,
+            milestones: Vec::new(env),
         };
         put_escrow(&env, &commitment, &entry);
         // Attempt cleanup (should not remove active escrow)
@@ -95,12 +110,22 @@ fn test_cleanup_does_not_remove_active_escrow() {
         assert!(has_escrow(&env, &commitment));
     });
 }
-use soroban_sdk::{testutils::Address as _, Address, Bytes, Env};
 
-use crate::{
-    storage::*,
-    types::{EscrowEntry, EscrowStatus},
-};
+#[test]
+fn test_cleanup_escrow_batch_rejects_unbounded_input() {
+    let env = Env::default();
+    let contract_id = env.register(crate::QuickexContract, ());
+    env.as_contract(&contract_id, || {
+        let mut commitments = Vec::new(&env);
+        for i in 0..21u8 {
+            let commitment: BytesN<32> = BytesN::from_array(&env, &[i; 32]);
+            commitments.push_back(commitment);
+        }
+
+        let result = crate::escrow::cleanup_escrow_batch(&env, commitments);
+        assert_eq!(result, Err(crate::errors::QuickexError::InvalidAmount));
+    });
+}
 
 #[test]
 fn test_escrow_storage() {
@@ -125,6 +150,8 @@ fn test_escrow_storage() {
             arbiter: None,
             arbiters: Vec::new(&env),
             arbiter_threshold: 0,
+        memo: None,
+            milestones: Vec::new(env),
         };
 
         // Test put_escrow
@@ -171,6 +198,8 @@ fn test_escrow_status_update() {
             arbiter: None,
             arbiters: Vec::new(&env),
             arbiter_threshold: 0,
+        memo: None,
+            milestones: Vec::new(env),
         };
 
         put_escrow(&env, &commitment, &entry);
