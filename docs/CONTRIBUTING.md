@@ -105,5 +105,6 @@ Verify that:
 - Rust tests pass (`cargo test`).
 - TypeScript tests pass (`npm test`).
 - Linting and secret scanning pass (`./scripts/secret-scan.sh --verify`).
+- The documentation gate passes (`node scripts/docs-check/check.mjs`) if you added or changed a controller, an `EXPO_PUBLIC_*` variable, or the OpenAPI document. A new route that nobody documented is a 404 waiting to happen.
 - Relevant capability maps and contract maps are updated in the same PR.
 - Record assumptions about network, custody, and backward compatibility in the PR description.
