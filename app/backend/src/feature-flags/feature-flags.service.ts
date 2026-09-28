@@ -189,29 +189,9 @@ const DEFAULT_FLAGS: FeatureFlagRecord[] = [
     updatedAt: new Date(0).toISOString(),
     updatedBy: 'bootstrap',
   },
-  // ── Username reservation expiry & anti-squatting (issue #194) ────────────
-  // Enabled on local/test only. Mainnet requires explicit admin enablement after
-  // operational review of the sweep cadence and inactivity thresholds.
-  {
-    key: 'username.reservation_expiry',
-    name: 'Username Reservation Expiry',
-    description:
-      'Enables username reservation with configurable expiry windows and anti-squatting inactivity sweeps.',
-    enabled: true,
-    killSwitch: false,
-    rolloutPercentage: 100,
-    allowedUsers: [],
-    environments: ['development', 'test'],
-    metadata: {
-      reservationWindowMs: 900000,   // 15 minutes
-      inactivityDays: 180,
-      sweepBatchSize: 100,
-    },
-    updatedAt: new Date(0).toISOString(),
-    updatedBy: 'bootstrap',
-  },
   // ── Username on-chain claim reconciliation (issue #193) ──────────────────
-  // Enabled on local/test only. Mainnet enablement requires operational sign-off.
+  // Enabled on local/test only. Mainnet enablement requires operational sign-off
+  // and review of Horizon call volume at production scale.
   {
     key: 'username.claim_reconciliation',
     name: 'Username Claim Reconciliation',

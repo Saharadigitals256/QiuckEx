@@ -5,15 +5,18 @@
  *  - reconcileUsernameClaim: active account → confirmed
  *  - reconcileUsernameClaim: account 404 → flagged in DB
  *  - reconcileUsernameClaim: Horizon 5xx → skipped
- *  - runBatchReconciliation: processes N usernames and returns correct counts
+ *  - reconcileUsernameClaim: no retry on 404 (single call)
+ *  - reconcileUsernameClaim: retries on transient errors then confirms
+ *  - runBatchReconciliation: processes N usernames, returns correct counts
+ *  - runBatchReconciliation: empty batch → zero counts
+ *  - runBatchReconciliation: cursor passed to Supabase
+ *  - runBatchReconciliation: persists run report
  *  - runBatchReconciliation: feature flag disabled → ServiceUnavailableException
- *  - runBatchReconciliation: cursor pagination
  *  - getReconciliationStatus: returns status row
- *  - getReconciliationStatus: username not found → NotFoundException
- *  - unflagUsername: restores claimed status
- *  - unflagUsername: username not found → NotFoundException
+ *  - getReconciliationStatus: unknown username → NotFoundException
+ *  - unflagUsername: clears flag
+ *  - unflagUsername: unknown username → NotFoundException
  *  - unflagUsername: feature flag disabled → ServiceUnavailableException
- *  - Retry: transient Horizon error retried up to maxAttempts then skipped
  */
 
 import { NotFoundException, ServiceUnavailableException } from '@nestjs/common';
@@ -54,11 +57,10 @@ describe('UsernameReconciliationService', () => {
     }),
     getFlagOrThrow: jest.fn().mockResolvedValue({
       key: 'username.claim_reconciliation',
-      metadata: { batchSize: 50, retryMaxAttempts: 3, retryBaseMs: 1 }, // 1ms in tests
+      metadata: { batchSize: 50, retryMaxAttempts: 3, retryBaseMs: 1 }, // 1ms retries in tests
     }),
   };
 
-  // Mock Horizon.Server
   let mockLoadAccount: jest.Mock;
 
   beforeEach(async () => {
@@ -81,7 +83,7 @@ describe('UsernameReconciliationService', () => {
     }).compile();
 
     service = module.get<UsernameReconciliationService>(UsernameReconciliationService);
-    // Patch the private Horizon server
+    // Patch the private Horizon server with a mock
     (service as unknown as { server: { loadAccount: jest.Mock } }).server = {
       loadAccount: mockLoadAccount,
     };
@@ -114,7 +116,7 @@ describe('UsernameReconciliationService', () => {
       );
     });
 
-    it('returns skipped on transient Horizon 5xx (after retries)', async () => {
+    it('returns skipped on transient Horizon 5xx (after all retries)', async () => {
       mockLoadAccount.mockRejectedValue(make500());
 
       const result = await service.reconcileUsernameClaim('alice', MOCK_PK);
@@ -133,8 +135,7 @@ describe('UsernameReconciliationService', () => {
       expect(mockLoadAccount).toHaveBeenCalledTimes(1);
     });
 
-    it('retries on transient errors before giving up', async () => {
-      // Fail twice, succeed on 3rd attempt
+    it('retries on transient errors and confirms on eventual success', async () => {
       mockLoadAccount
         .mockRejectedValueOnce(make500())
         .mockRejectedValueOnce(make500())
@@ -152,13 +153,13 @@ describe('UsernameReconciliationService', () => {
   describe('runBatchReconciliation', () => {
     it('processes a batch and returns correct counts', async () => {
       mockSupabase.fetchClaimedUsernames.mockResolvedValue([
-        { id: '1', username: 'alice', public_key: MOCK_PK, created_at: '2026-01-01T00:00:00Z', last_active_at: null },
-        { id: '2', username: 'bob', public_key: MOCK_PK, created_at: '2026-01-02T00:00:00Z', last_active_at: null },
+        { id: '1', username: 'alice',   public_key: MOCK_PK, created_at: '2026-01-01T00:00:00Z', last_active_at: null },
+        { id: '2', username: 'bob',     public_key: MOCK_PK, created_at: '2026-01-02T00:00:00Z', last_active_at: null },
         { id: '3', username: 'charlie', public_key: MOCK_PK, created_at: '2026-01-03T00:00:00Z', last_active_at: null },
       ]);
       mockLoadAccount
         .mockResolvedValueOnce({ id: MOCK_PK }) // alice: confirmed
-        .mockRejectedValueOnce(make404())        // bob: flagged
+        .mockRejectedValueOnce(make404())        // bob:   flagged
         .mockRejectedValueOnce(make500());       // charlie: skipped
 
       mockSupabase.flagUsernameForReview.mockResolvedValue(undefined);
@@ -173,13 +174,15 @@ describe('UsernameReconciliationService', () => {
       expect(report.durationMs).toBeGreaterThanOrEqual(0);
     });
 
-    it('returns empty report for an empty batch', async () => {
+    it('returns empty report when no claimed usernames', async () => {
       mockSupabase.fetchClaimedUsernames.mockResolvedValue([]);
 
       const report = await service.runBatchReconciliation(50);
 
       expect(report.processed).toBe(0);
       expect(report.confirmed).toBe(0);
+      expect(report.flagged).toBe(0);
+      expect(report.skipped).toBe(0);
     });
 
     it('passes cursor to fetchClaimedUsernames', async () => {
@@ -196,16 +199,23 @@ describe('UsernameReconciliationService', () => {
       await expect(service.runBatchReconciliation(50)).rejects.toBeInstanceOf(ServiceUnavailableException);
     });
 
-    it('persists the run report to Supabase', async () => {
+    it('persists the run report to Supabase asynchronously', async () => {
       mockSupabase.fetchClaimedUsernames.mockResolvedValue([]);
 
       await service.runBatchReconciliation(50);
 
-      // persistUsernameReconciliationRun is called async — give it a tick
+      // Give the async persist a tick
       await new Promise((r) => setTimeout(r, 10));
       expect(mockSupabase.persistUsernameReconciliationRun).toHaveBeenCalledWith(
         expect.objectContaining({ processed: 0 }),
       );
+    });
+
+    it('does not throw if persistUsernameReconciliationRun fails', async () => {
+      mockSupabase.fetchClaimedUsernames.mockResolvedValue([]);
+      mockSupabase.persistUsernameReconciliationRun.mockRejectedValue(new Error('DB unavailable'));
+
+      await expect(service.runBatchReconciliation(50)).resolves.toBeDefined();
     });
   });
 
@@ -223,6 +233,7 @@ describe('UsernameReconciliationService', () => {
 
       expect(result.username).toBe('alice');
       expect(result.ownership_status).toBe('claimed');
+      expect(result.last_active_at).toBe('2026-09-01T00:00:00Z');
     });
 
     it('throws NotFoundException when username does not exist', async () => {

@@ -48,8 +48,8 @@ export class UsernameReconciliationController {
     summary: 'Run a batch on-chain username claim reconciliation',
     description:
       'Fetches up to `batchSize` claimed usernames and verifies each against Horizon. ' +
-      'Accounts absent on-chain are flagged (ownership_status=flagged). ' +
-      'Transient Horizon errors are counted as skipped and can be retried safely. ' +
+      'Accounts absent on-chain (404) are flagged (ownership_status=flagged). ' +
+      'Transient Horizon errors are counted as skipped and are safely retryable. ' +
       'Gated by `username.claim_reconciliation` feature flag (dev/test only by default).',
   })
   @ApiQuery({ name: 'batchSize', required: false, type: 'number', example: 50 })

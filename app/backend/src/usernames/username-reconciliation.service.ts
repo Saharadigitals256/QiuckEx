@@ -74,7 +74,8 @@ export class UsernameReconciliationService {
    * - If the account returns 404: `flagged` (ownership_status updated in Supabase).
    * - On transient Horizon errors: `skipped` (caller should retry the batch).
    *
-   * The feature flag is checked by the caller (runBatchReconciliation / unflag).
+   * The feature flag is asserted by batch callers; this method is intentionally
+   * not gated so it can be tested in isolation.
    */
   async reconcileUsernameClaim(
     username: string,
@@ -101,7 +102,7 @@ export class UsernameReconciliationService {
       const horizonErr = err as { response?: { status?: number } };
 
       if (horizonErr?.response?.status === 404) {
-        // Account no longer exists on-chain → flag for review.
+        // Account no longer exists on-chain → flag for admin review.
         await this.supabase.flagUsernameForReview(
           username,
           'Stellar account not found on-chain during reconciliation',
@@ -270,7 +271,7 @@ export class UsernameReconciliationService {
       return await this.server.loadAccount(publicKey);
     } catch (err) {
       const horizonErr = err as { response?: { status?: number } };
-      // 404 is a definitive answer — do not retry.
+      // 404 is definitive — do not retry.
       if (horizonErr?.response?.status === 404) throw err;
 
       const maxAttempts = await this.getMaxRetryAttempts();
