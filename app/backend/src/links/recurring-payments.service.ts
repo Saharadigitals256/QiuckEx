@@ -44,6 +44,7 @@ export class RecurringPaymentsService {
       const link = await this.repository.createLink({
         username: dto.username || null,
         destination: dto.destination || null,
+        payerPublicKey: dto.payerPublicKey || null,
         amount: dto.amount,
         asset: dto.asset,
         assetIssuer: dto.assetIssuer || null,
@@ -179,7 +180,7 @@ export class RecurringPaymentsService {
     }
 
     if (link.status === RecurringStatus.CANCELLED) {
-      throw new BadRequestException('Link is already cancelled');
+      return this.mapToResponseDto(link);
     }
 
     const updatedLink = await this.repository.updateStatus(id, RecurringStatus.CANCELLED);
@@ -204,6 +205,10 @@ export class RecurringPaymentsService {
 
     if (!link) {
       throw new NotFoundException(`Recurring payment link not found: ${id}`);
+    }
+
+    if (link.status === RecurringStatus.PAUSED) {
+      return this.mapToResponseDto(link);
     }
 
     if (link.status !== RecurringStatus.ACTIVE) {
@@ -234,30 +239,30 @@ export class RecurringPaymentsService {
       throw new NotFoundException(`Recurring payment link not found: ${id}`);
     }
 
+    if (link.status === RecurringStatus.ACTIVE) {
+      return this.mapToResponseDto(link);
+    }
+
     if (link.status !== RecurringStatus.PAUSED) {
       throw new BadRequestException('Link is not paused');
     }
 
-    // Calculate next execution date from now
-    this.calculateNextExecutionDate(new Date(), link.frequency);
+    const nextDate = this.calculateNextExecutionDate(new Date(), link.frequency);
 
-    await this.repository.updateLink(id, {
-      // Reset next execution date
+    const statusUpdatedLink = await this.repository.updateLink(id, {
+      nextExecutionDate: nextDate,
     });
-
-    // Manually update status and next_execution_date
-    const statusUpdatedLink = await this.repository.updateStatus(id, RecurringStatus.ACTIVE);
+    const activeLink = await this.repository.updateStatus(id, RecurringStatus.ACTIVE);
 
     this.logger.log(`Resumed recurring payment link: ${id}`);
 
-    // Emit event
     this.eventEmitter.emit('recurring.link.resumed', {
       linkId: id,
       username: link.username,
       destination: link.destination,
     });
 
-    return this.mapToResponseDto(statusUpdatedLink);
+    return this.mapToResponseDto({ ...activeLink, next_execution_date: statusUpdatedLink.next_execution_date });
   }
 
   /**
@@ -292,11 +297,14 @@ export class RecurringPaymentsService {
     executionId: string,
     transactionHash: string,
   ): Promise<void> {
-    const executions = await this.repository.findExecutionsByLinkId(executionId);
-    const execution = executions.find(e => e.id === executionId);
-    
+    const execution = await this.repository.findExecutionById(executionId);
+
     if (!execution) {
       throw new NotFoundException(`Execution not found: ${executionId}`);
+    }
+
+    if (execution.status === ExecutionStatus.SUCCESS) {
+      return;
     }
 
     await this.repository.updateExecutionStatus(executionId, ExecutionStatus.SUCCESS, {
@@ -304,28 +312,26 @@ export class RecurringPaymentsService {
       transactionHash,
     });
 
-    // Increment executed count on the link
     const link = await this.repository.findById(execution.recurring_link_id);
     if (link) {
-      // Check if we've reached the end
+      const nextExecutedCount = (link.executed_count ?? 0) + 1;
       const shouldComplete =
-        (link.total_periods !== null && link.executed_count + 1 >= link.total_periods) ||
+        (link.total_periods !== null && nextExecutedCount >= link.total_periods) ||
         (link.end_date && new Date(link.end_date) <= new Date());
 
       if (shouldComplete) {
         await this.repository.updateStatus(link.id, RecurringStatus.COMPLETED);
         this.logger.log(`Completed recurring payment link: ${link.id}`);
-        
+
         this.eventEmitter.emit('recurring.link.completed', {
           linkId: link.id,
-          totalExecuted: link.executed_count + 1,
+          totalExecuted: nextExecutedCount,
         });
       } else {
-        // Schedule next execution
         const nextDate = this.calculateNextExecutionDate(new Date(), link.frequency);
         await this.repository.createExecution({
           recurringLinkId: link.id,
-          periodNumber: link.executed_count + 2,
+          periodNumber: nextExecutedCount + 1,
           scheduledAt: nextDate,
           amount: link.amount,
           asset: link.asset,
@@ -335,7 +341,6 @@ export class RecurringPaymentsService {
 
     this.logger.log(`Marked payment ${executionId} as successful`);
 
-    // Emit event
     this.eventEmitter.emit('recurring.payment.executed', {
       executionId,
       transactionHash,
@@ -352,15 +357,21 @@ export class RecurringPaymentsService {
   ): Promise<void> {
     const maxRetries = parseInt(process.env.RECURRING_PAYMENT_MAX_RETRY || '3');
 
-    const executions = await this.repository.findExecutionsByLinkId(executionId);
-    const execution = executions.find(e => e.id === executionId);
-    
+    const execution = await this.repository.findExecutionById(executionId);
+
     if (!execution) {
       throw new NotFoundException(`Execution not found: ${executionId}`);
     }
 
+    if (execution.status === ExecutionStatus.SUCCESS) {
+      return;
+    }
+
+    if (execution.status === ExecutionStatus.FAILED) {
+      return;
+    }
+
     if (retryCount >= maxRetries) {
-      // Max retries reached - mark as permanently failed
       await this.repository.updateExecutionStatus(executionId, ExecutionStatus.FAILED, {
         failureReason,
         retryCount,
@@ -369,14 +380,12 @@ export class RecurringPaymentsService {
 
       this.logger.error(`Payment ${executionId} failed permanently after ${retryCount} retries`);
 
-      // Emit event
       this.eventEmitter.emit('recurring.payment.failed', {
         executionId,
         failureReason,
         permanent: true,
       });
     } else {
-      // Schedule retry
       await this.repository.updateExecutionStatus(executionId, ExecutionStatus.PENDING, {
         failureReason,
         retryCount,
@@ -512,6 +521,7 @@ export class RecurringPaymentsService {
       id: link.id,
       username: link.username || undefined,
       destination: link.destination || undefined,
+      payerPublicKey: link.payer_public_key || undefined,
       amount: link.amount,
       asset: link.asset,
       assetIssuer: link.asset_issuer || undefined,

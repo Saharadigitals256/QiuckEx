@@ -30,6 +30,7 @@ export class AbuseSignalMiddleware implements NestMiddleware {
   }
 
   private isPaymentPageRoute(path: string): boolean {
+    if (path.startsWith("/marketplace")) return true;
     for (const route of PAYMENT_ROUTES) {
       if (path.includes(route)) return true;
     }
@@ -70,6 +71,10 @@ export class AbuseSignalMiddleware implements NestMiddleware {
   }
 
   private determineActionType(path: string): SignalActionType {
+    if (path.includes("/marketplace/") && path.endsWith("/bid")) {
+      return "marketplace_bid";
+    }
+    if (path.includes("/marketplace/list")) return "marketplace_listing";
     if (path.includes("payment-links")) return "payment_link_status";
     if (path.includes("links/metadata")) return "link_metadata";
     return "payment_link_status";

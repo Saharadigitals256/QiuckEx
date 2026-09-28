@@ -274,12 +274,14 @@ export function formatPublicKey(publicKey: string): string {
 export async function placeBid(
   listingId: string,
   amount: number,
+  signature: string,
+  signedAt: number,
   bidderPublicKey = resolvePublicKey(),
 ): Promise<BidResult> {
   const response = await fetch(`${getQuickexApiBase()}/marketplace/${listingId}/bid`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({ bidderPublicKey, bidAmount: amount }),
+    body: JSON.stringify({ bidderPublicKey, bidAmount: amount, signature, signedAt }),
   });
   const payload = (await response.json().catch(() => ({}))) as { message?: string };
   if (!response.ok) {

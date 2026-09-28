@@ -148,6 +148,7 @@ impl<'a> TestContext<'a> {
             &self.salt(salt),
             &0,
             &None,
+            &None,
             &Self::TEST_DEPOSIT_NONCE,
             &Self::TEST_DEPOSIT_VALID_UNTIL,
         )
@@ -169,6 +170,7 @@ impl<'a> TestContext<'a> {
             &self.salt(salt),
             &timeout_secs,
             &Some(self.arbiter.clone()),
+            &None,
             &Self::TEST_DEPOSIT_NONCE,
             &Self::TEST_DEPOSIT_VALID_UNTIL,
         )

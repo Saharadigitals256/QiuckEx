@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report
+    url: https://github.com/Viky207/QiuckEx/blob/main/docs/security.md
+    about: Report a vulnerability privately. Do not open a public issue for security bugs.
+  - name: Capability map
+    url: https://github.com/Viky207/QiuckEx/blob/main/docs/CAPABILITY-MAP.md
+    about: Check whether the flow you are reporting is already Live, Partial, or Mocked.
+  - name: Contributor guide
+    url: https://github.com/Viky207/QiuckEx/blob/main/CONTRIBUTING.md
+    about: Branch naming, PR conventions, and local setup before you file.

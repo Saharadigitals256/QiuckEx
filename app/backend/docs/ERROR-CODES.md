@@ -1,21 +1,20 @@
-# QuickEx API — Error Contract & Troubleshooting Guide
+# Backend Error Codes
 
-Every non-2xx response from the QuickEx backend follows a single JSON shape.
-Clients can rely on this contract for all key flows.
+Stable, machine-readable error codes returned by the QuickEx backend. Clients
+should branch on `code` (never on the human-readable `message`), which is
+considered part of the public API contract.
 
-**Last Updated:** April 2026 | **Version:** 2.0.0
+## Envelope
 
-## Response Shape
+All error responses share the same shape:
 
 ```json
 {
-  "success": false,
   "error": {
-    "code": "ERROR_CODE",
-    "message": "Human-readable description",
-    "request_id": "uuid-v4",
-    "fields": { "fieldName": ["validation message"] },
-    "details": {}
+    "code": "WALLETCONNECT_SESSION_EXPIRED",
+    "message": "WalletConnect session has expired.",
+    "details": { "sessionId": "..." },
+    "requestId": "..."
   }
 }
 ```
@@ -546,6 +545,42 @@ const response = await fetch('http://localhost:3000/api-keys', {
 5. If the account was just created, it may not have a trustline for the requested asset.
 
 ---
+
+### Asset Listing (`asset-listing`)
+
+| Code | HTTP Status | Description |
+|---|---|---|
+| `ASSET_LISTING_UNAUTHORIZED` | 403 | Missing or insufficient scope (admin key required) |
+| `ASSET_NOT_FOUND` | 404 | Unknown `code` / `issuer` pair |
+| `ASSET_LISTING_EVIDENCE_INCOMPLETE` | 422 | Tier requirements unmet (or an unknown trigger was supplied) |
+| `ASSET_LISTING_EVIDENCE_EXPIRED` | 422 | Evidence past its `maxAgeDays` (inclusive boundary) |
+| `ASSET_LISTING_INVALID_TRANSITION` | 422 | Transition not in the published policy's transition table |
+| `ASSET_LISTING_COOLING_OFF_ACTIVE` | 409 | Re-listing attempted inside the 30-day cooling-off window |
+| `ASSET_LISTING_IDEMPOTENCY_CONFLICT` | 409 | `Idempotency-Key` reused with a different payload |
+| `ASSET_LISTING_DECISIONS_DISABLED` | 403 | `assets.listing_decisions` flag off (expected on mainnet) |
+| `ASSET_LISTING_REGISTRY_UNAVAILABLE` | 503 | Registry/evidence store unreachable; the policy refuses to fail open |
+
+Policy of record: [../../docs/policies/ASSET-LISTING-POLICY.md](../../docs/policies/ASSET-LISTING-POLICY.md).
+
+### Privacy: retention & deletion (`privacy`)
+
+| Code | HTTP Status | Description |
+|---|---|---|
+| `DELETION_INTAKE_DISABLED` | 403 | `privacy.deletion_requests` flag off |
+| `DELETION_SUBJECT_NOT_FOUND` | 404 | Subject cannot be resolved to a known Stellar public key |
+| `DELETION_CHALLENGE_UNKNOWN` | 404 | Challenge id unknown, purged, or the request id does not exist |
+| `DELETION_CHALLENGE_EXPIRED` | 410 | Challenge past `expiresAt` (TTL 900s) |
+| `DELETION_SIGNATURE_INVALID` | 401 | Signature does not verify against the subject key |
+| `DELETION_REQUEST_DUPLICATE` | 409 | A live request already exists for the subject; existing `requestId` in `details` |
+| `DELETION_IDEMPOTENCY_CONFLICT` | 409 | `Idempotency-Key` reused with a different payload |
+| `DELETION_HOLD_ACTIVE` | 409 | At least one category is under a hold (per-category detail included) |
+| `DELETION_NOT_CANCELLABLE` | 409 | Cancellation after the cooling-off window or once execution began |
+| `DELETION_ALREADY_EXECUTED` | 409 | The request already completed |
+| `RETENTION_SWEEP_DISABLED` | 403 | `privacy.retention_sweep` flag off |
+| `RETENTION_STORE_UNAVAILABLE` | 503 | Store unreachable; nothing was persisted or deleted |
+| `RETENTION_POLICY_UNAVAILABLE` | 503 | Schedule/salt unavailable (e.g. missing `PRIVACY_SUBJECT_HASH_SALT` in production) |
+
+Policy of record: [../../docs/policies/DATA-RETENTION-PRIVACY-POLICY.md](../../docs/policies/DATA-RETENTION-PRIVACY-POLICY.md).
 
 ## HTTP Status Code Summary
 

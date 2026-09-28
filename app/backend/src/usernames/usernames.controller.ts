@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Query,
   Param,
   ConflictException,
@@ -35,6 +36,7 @@ import {
   FeaturedUsernamesQueryDto,
   FeaturedUsernamesResponseDto,
   PublicProfileDto,
+  ProfileSettingsDto,
 } from "../dto";
 import { UsernamesService } from "./usernames.service";
 import {
@@ -195,6 +197,39 @@ export class UsernamesController {
       query.publicKey,
     );
     return { usernames };
+  }
+
+  @Get("profile")
+  @ApiOperation({ summary: "Get editable profile settings for a wallet" })
+  @ApiResponse({ status: 200, description: "Profile settings owned by the wallet" })
+  async getProfileSettings(
+    @Query() query: ListUsernamesQueryDto,
+  ) {
+    const profiles = await this.usernamesService.getProfileSettings(query.publicKey);
+    return { profiles };
+  }
+
+  @Patch("profile")
+  @ApiOperation({ summary: "Save validated profile settings with conflict detection" })
+  @ApiBody({ type: ProfileSettingsDto })
+  @ApiResponse({ status: 200, description: "Profile settings saved" })
+  @ApiResponse({ status: 403, description: "Profile is not owned by this wallet" })
+  @ApiResponse({ status: 409, description: "Profile changed since it was loaded" })
+  async updateProfileSettings(@Body() body: ProfileSettingsDto) {
+    const result = await this.usernamesService.updateProfileSettings(body);
+    if (result.status === "not_found") {
+      throw new ForbiddenException({
+        code: "PROFILE_NOT_OWNED",
+        message: "Profile not found for this wallet",
+      });
+    }
+    if (result.status === "conflict") {
+      throw new ConflictException({
+        code: "PROFILE_CONFLICT",
+        message: "Profile changed since it was loaded",
+      });
+    }
+    return { profile: result.profile };
   }
 
   @Get("search")

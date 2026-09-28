@@ -437,22 +437,149 @@ pub fn is_upgrade_window_active(env: &Env) -> bool {
         return false; // No window set
     }
     let now = env.ledger().timestamp();
-    now >= start && (end == 0 || now <= end)
+    now >= start && (end == 0 || now < end)
 }
 
 /// Set upgrade-in-progress flag.
 pub fn set_upgrade_in_progress(env: &Env, in_progress: bool) {
     env.storage()
-        .persistent()
+        .instance()
         .set(&DataKey::UpgradeInProgress, &in_progress);
+    env.storage()
+        .instance()
+        .extend_ttl(LEDGER_THRESHOLD, SIX_MONTHS_IN_LEDGERS);
 }
 
 /// Get upgrade-in-progress flag.
 pub fn is_upgrade_in_progress(env: &Env) -> bool {
-    env.storage()
+    if let Some(in_progress) = env
+        .storage()
+        .instance()
+        .get(&DataKey::UpgradeInProgress)
+    {
+        env.storage()
+            .instance()
+            .extend_ttl(LEDGER_THRESHOLD, SIX_MONTHS_IN_LEDGERS);
+        return in_progress;
+    }
+
+    let legacy_in_progress = env
+        .storage()
         .persistent()
         .get(&DataKey::UpgradeInProgress)
+        .unwrap_or(false);
+    if legacy_in_progress {
+        set_upgrade_in_progress(env, true);
+    }
+    legacy_in_progress
+}
+
+pub fn get_governance_config(env: &Env) -> Option<GovernanceConfig> {
+    if !governance_is_initialized(env) {
+        return None;
+    }
+    env.storage()
+        .instance()
+        .extend_ttl(LEDGER_THRESHOLD, SIX_MONTHS_IN_LEDGERS);
+    env.storage().instance().get(&DataKey::GovernanceConfig)
+}
+
+pub fn set_governance_config(env: &Env, config: &GovernanceConfig) {
+    env.storage().instance().set(&DataKey::GovernanceConfig, config);
+    env.storage().instance().set(&DataKey::GovernanceActivated, &true);
+    env.storage()
+        .instance()
+        .extend_ttl(LEDGER_THRESHOLD, SIX_MONTHS_IN_LEDGERS);
+}
+
+pub fn governance_is_initialized(env: &Env) -> bool {
+    let initialized = env.storage()
+        .instance()
+        .get(&DataKey::GovernanceActivated)
+        .unwrap_or(false);
+    if initialized {
+        env.storage()
+            .instance()
+            .extend_ttl(LEDGER_THRESHOLD, SIX_MONTHS_IN_LEDGERS);
+    }
+    initialized
+}
+
+pub fn governance_execution_in_progress(env: &Env) -> bool {
+    env.storage()
+        .instance()
+        .get(&DataKey::GovernanceExecution)
         .unwrap_or(false)
+}
+
+pub fn set_governance_execution(env: &Env, executing: bool) {
+    env.storage()
+        .instance()
+        .set(&DataKey::GovernanceExecution, &executing);
+    env.storage()
+        .instance()
+        .extend_ttl(LEDGER_THRESHOLD, SIX_MONTHS_IN_LEDGERS);
+}
+
+pub fn get_governance_proposal(env: &Env, proposal_id: u64) -> Option<GovernanceProposal> {
+    let key = DataKey::GovernanceProposal(proposal_id);
+    let proposal = env.storage().persistent().get(&key);
+    if proposal.is_some() {
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, LEDGER_THRESHOLD, SIX_MONTHS_IN_LEDGERS);
+    }
+    proposal
+}
+
+pub fn set_governance_proposal(env: &Env, proposal_id: u64, proposal: &GovernanceProposal) {
+    let key = DataKey::GovernanceProposal(proposal_id);
+    env.storage().persistent().set(&key, proposal);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, LEDGER_THRESHOLD, SIX_MONTHS_IN_LEDGERS);
+}
+
+pub fn next_governance_proposal_id(env: &Env) -> Option<u64> {
+    let current: u64 = env
+        .storage()
+        .instance()
+        .get(&DataKey::GovernanceProposalCounter)
+        .unwrap_or(0);
+    let next = current.checked_add(1)?;
+    env.storage().instance().set(&DataKey::GovernanceProposalCounter, &next);
+    env.storage()
+        .instance()
+        .extend_ttl(LEDGER_THRESHOLD, SIX_MONTHS_IN_LEDGERS);
+    Some(next)
+}
+
+pub fn set_pending_upgrade_version(env: &Env, version: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::PendingUpgradeVersion, &version);
+    env.storage()
+        .instance()
+        .extend_ttl(LEDGER_THRESHOLD, SIX_MONTHS_IN_LEDGERS);
+}
+
+pub fn get_pending_upgrade_version(env: &Env) -> Option<u32> {
+    let version = env
+        .storage()
+        .instance()
+        .get(&DataKey::PendingUpgradeVersion);
+    if version.is_some() {
+        env.storage()
+            .instance()
+            .extend_ttl(LEDGER_THRESHOLD, SIX_MONTHS_IN_LEDGERS);
+    }
+    version
+}
+
+pub fn clear_pending_upgrade_version(env: &Env) {
+    env.storage()
+        .instance()
+        .remove(&DataKey::PendingUpgradeVersion);
 }
 
 // ─────────────────────────────────────────────────────────────────────────

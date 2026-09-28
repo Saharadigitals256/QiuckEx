@@ -2,10 +2,12 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { ConflictException, NotFoundException } from "@nestjs/common";
 import { ReconciliationController } from "./reconciliation.controller";
 import { ReconciliationWorkerService } from "./reconciliation-worker.service";
+import { ReconciliationService } from "./reconciliation.service";
 import { BackfillService } from "./backfill.service";
 import { AutoMatchService } from "./auto-match.service";
 import { UnmatchedQueueRepository } from "./unmatched-queue.repository";
 import { NetworkSafetyGuard } from "../feature-flags/network-safety.guard";
+import { IndexerLagService } from "../indexer-lag/indexer-lag.service";
 
 describe("ReconciliationController", () => {
   let controller: ReconciliationController;
@@ -46,6 +48,8 @@ describe("ReconciliationController", () => {
         { provide: BackfillService, useValue: mockBackfill },
         { provide: AutoMatchService, useValue: mockAutoMatch },
         { provide: UnmatchedQueueRepository, useValue: mockUnmatchedQueue },
+        { provide: IndexerLagService, useValue: { getStatus: jest.fn() } },
+        { provide: ReconciliationService, useValue: { getLatestReport: jest.fn() } },
       ],
     })
       .overrideGuard(NetworkSafetyGuard)

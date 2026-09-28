@@ -21,6 +21,20 @@ How every client resolves API URLs, Stellar network settings, contract IDs, and 
 | **Build tag** | N/A | `NEXT_PUBLIC_VERCEL_GIT_COMMIT_REF` | `extra.buildTag` |
 | **Contract registry version** | N/A (serves) | `NEXT_PUBLIC_CONTRACT_REGISTRY_VERSION` | from registry endpoint |
 
+### Governance config (issues #306, #307)
+
+| Field | Backend | Frontend (Web) | Mobile |
+|---|---|---|---|
+| **Asset listing policy** | flags `assets.listing_policy`, `assets.listing_decisions` (env: development/test only) | reads `GET /stellar/verified-assets` + `GET /asset-listing/policy` | same as web |
+| **Privacy retention** | flags `privacy.deletion_requests`, `privacy.retention_sweep` (env: development/test only) | reads `GET /privacy/retention-policy` | same as web |
+| **Subject hash salt** | `PRIVACY_SUBJECT_HASH_SALT` (**required** in production; dev default otherwise) | N/A | N/A |
+| **Sweep batch size** | `PRIVACY_SWEEP_BATCH_SIZE` (default 500) | N/A | N/A |
+| **Hold overrides** | `PRIVACY_HOLD_OVERRIDES_JSON` (operator-set holds; only adds restrictions) | N/A | N/A |
+| **Intake kill switch** | `PRIVACY_DELETION_REQUESTS_ENABLED` (env guard) | N/A | N/A |
+
+Defaults are declared in `app/backend/.env.example`; the machine-readable source of truth for windows, holds and
+SLA is [policies/data/retention-schedule.json](policies/data/retention-schedule.json).
+
 ---
 
 ## 2. Source of Truth per Client

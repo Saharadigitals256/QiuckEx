@@ -13,6 +13,7 @@ export type DbRecurringPaymentLink = {
   id: string;
   username: string | null;
   destination: string | null;
+  payer_public_key: string | null;
   amount: number;
   asset: string;
   asset_issuer: string | null;
@@ -68,6 +69,7 @@ export class RecurringPaymentsRepository {
   async createLink(link: {
     username?: string | null;
     destination?: string | null;
+    payerPublicKey?: string | null;
     amount: number;
     asset: string;
     assetIssuer?: string | null;
@@ -84,6 +86,7 @@ export class RecurringPaymentsRepository {
     const insertData: Record<string, unknown> = {
       username: link.username || null,
       destination: link.destination || null,
+      payer_public_key: link.payerPublicKey || null,
       amount: link.amount,
       asset: link.asset,
       asset_issuer: link.assetIssuer || null,
@@ -234,6 +237,7 @@ export class RecurringPaymentsRepository {
       totalPeriods: number | null;
       memo: string | null;
       referenceId: string | null;
+      nextExecutionDate: Date | null;
     }>,
   ): Promise<DbRecurringPaymentLink> {
     const updateData: Record<string, unknown> = {};
@@ -244,6 +248,9 @@ export class RecurringPaymentsRepository {
     if (updates.totalPeriods !== undefined) updateData.total_periods = updates.totalPeriods;
     if (updates.memo !== undefined) updateData.memo = updates.memo;
     if (updates.referenceId !== undefined) updateData.reference_id = updates.referenceId;
+    if (updates.nextExecutionDate !== undefined) {
+      updateData.next_execution_date = updates.nextExecutionDate?.toISOString();
+    }
 
     const { data, error } = await this.supabase
       .from('recurring_payment_links')
@@ -295,6 +302,18 @@ export class RecurringPaymentsRepository {
 
     if (error) {
       this.logger.error(`Error incrementing executed count: ${error.message}`, error.stack);
+      throw error;
+    }
+  }
+
+  async completeExecution(executionId: string, transactionHash: string): Promise<void> {
+    const { error } = await this.supabase.rpc('record_recurring_payment_success', {
+      p_execution_id: executionId,
+      p_transaction_hash: transactionHash,
+    });
+
+    if (error) {
+      this.logger.error(`Error completing recurring execution: ${error.message}`, error.stack);
       throw error;
     }
   }
@@ -407,6 +426,21 @@ export class RecurringPaymentsRepository {
     }
 
     return data as DbRecurringPaymentExecution[];
+  }
+
+  async findExecutionById(id: string): Promise<DbRecurringPaymentExecution | null> {
+    const { data, error } = await this.supabase
+      .from('recurring_payment_executions')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (error && error.code !== 'PGRST116') {
+      this.logger.error(`Error finding execution: ${error.message}`, error.stack);
+      throw error;
+    }
+
+    return data as DbRecurringPaymentExecution | null;
   }
 
   async updateExecutionStatus(

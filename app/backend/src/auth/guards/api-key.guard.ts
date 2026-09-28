@@ -22,7 +22,21 @@ export class ApiKeyGuard implements CanActivate {
     const request = context.switchToHttp().getRequest();
     const rawKey: string | undefined = request.headers["x-api-key"];
 
-    if (!rawKey) return true; // public access allowed
+    const requiredScopes =
+      this.reflector.getAllAndOverride<ApiKeyScope[]>(REQUIRED_SCOPES_KEY, [
+        context.getHandler(),
+        context.getClass(),
+      ]) ?? [];
+
+    if (!rawKey) {
+      if (requiredScopes.length > 0) {
+        throw new UnauthorizedException({
+          error: "API_KEY_REQUIRED",
+          message: "An API key is required for this endpoint",
+        });
+      }
+      return true;
+    }
 
     const result = await this.apiKeysService.validateKey(rawKey);
 
@@ -51,12 +65,6 @@ export class ApiKeyGuard implements CanActivate {
     }
 
     // Check required scopes declared on the handler/controller via @RequireScopes()
-    const requiredScopes =
-      this.reflector.getAllAndOverride<ApiKeyScope[]>(REQUIRED_SCOPES_KEY, [
-        context.getHandler(),
-        context.getClass(),
-      ]) ?? [];
-
     for (const scope of requiredScopes) {
       if (!hasScope(scope)) {
         throw new ForbiddenException({

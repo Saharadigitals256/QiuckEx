@@ -16,6 +16,8 @@ import { StellarIngestionService } from "./stellar-ingestion.service";
 import { SorobanEventIndexerService } from "./soroban-event-indexer.service";
 import { SorobanIndexerController } from "./soroban-indexer.controller";
 import { IngestionBootstrapService } from "./ingestion-bootstrap.service";
+import { RawEventRetentionService } from "./raw-event-retention.service";
+import { AuthModule } from "../auth/auth.module";
 
 @Module({
   imports: [
@@ -23,6 +25,7 @@ import { IngestionBootstrapService } from "./ingestion-bootstrap.service";
     forwardRef(() => JobQueueModule),
     MetricsModule,
     ContractsModule,
+    AuthModule,
   ],
   controllers: [SorobanIndexerController],
   providers: [
@@ -37,6 +40,7 @@ import { IngestionBootstrapService } from "./ingestion-bootstrap.service";
     StellarIngestionService,
     SorobanEventIndexerService,
     IngestionBootstrapService,
+    RawEventRetentionService,
   ],
   exports: [
     StellarIngestionService,

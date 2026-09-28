@@ -18,6 +18,7 @@ import {
   ReconciliationHandler,
   StellarReconnectHandler,
   TemplateExecutionHandler,
+  DerivedRecordRepairHandler,
 } from './handlers';
 
 /**
@@ -39,6 +40,7 @@ export class JobQueueInitializer implements OnModuleInit {
     private readonly reconciliationHandler: ReconciliationHandler,
     private readonly stellarReconnectHandler: StellarReconnectHandler,
     private readonly templateExecutionHandler: TemplateExecutionHandler,
+    private readonly derivedRecordRepairHandler: DerivedRecordRepairHandler,
   ) {}
 
   /**
@@ -133,6 +135,18 @@ export class JobQueueInitializer implements OnModuleInit {
         initialDelayMs: 5000,         // 5 seconds
         maxDelayMs: 300000,           // 5 minutes
         visibilityTimeoutMs: 600000,  // 10 minutes (template processing can take time)
+      },
+    );
+
+    this.registry.registerHandler(
+      JobType.DERIVED_RECORD_REPAIR,
+      this.derivedRecordRepairHandler,
+      {
+        maxAttempts: 3,
+        backoffStrategy: 'exponential',
+        initialDelayMs: 5000,
+        maxDelayMs: 300000,
+        visibilityTimeoutMs: 900000,
       },
     );
 

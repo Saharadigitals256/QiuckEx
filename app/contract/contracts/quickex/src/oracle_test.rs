@@ -136,7 +136,7 @@ fn test_stale_oracle_rejects_with_price_aware() {
     // Withdraw via price-aware path should reject with OracleStalePrice
     let amount: i128 = 10_000;
     let salt = Bytes::from_slice(&env, b"stale_reject_salt");
-    let commitment = client.deposit(&token, &amount, &owner, &salt, &0, &None, &0u64, &u64::MAX);
+    let commitment = client.deposit(&token, &amount, &owner, &salt, &0, &None, &None, &0u64, &u64::MAX);
     let result = client.try_withdraw(
         &token,
         &amount,
@@ -185,7 +185,7 @@ fn test_fresh_oracle_uses_dynamic_fee() {
     // Use amount > oracle fee so it is not capped
     let amount: i128 = 100_000;
     let salt = Bytes::from_slice(&env, b"fresh_oracle_salt");
-    let commitment = client.deposit(&token, &amount, &owner, &salt, &0, &None, &0u64, &u64::MAX);
+    let commitment = client.deposit(&token, &amount, &owner, &salt, &0, &None, &None, &0u64, &u64::MAX);
     client.withdraw(
         &token,
         &amount,
@@ -233,7 +233,7 @@ fn test_fresh_oracle_exact_boundary_uses_dynamic_fee() {
 
     let amount: i128 = 100_000;
     let salt = Bytes::from_slice(&env, b"boundary_salt");
-    let commitment = client.deposit(&token, &amount, &owner, &salt, &0, &None, &0u64, &u64::MAX);
+    let commitment = client.deposit(&token, &amount, &owner, &salt, &0, &None, &None, &0u64, &u64::MAX);
     client.withdraw(
         &token,
         &amount,

@@ -68,6 +68,10 @@ function DashboardContent() {
   const { data, error, loading, callApi } = useApi<DashboardResponse>();
   const [userBids, setUserBids] = useState<UserBid[]>([]);
   const [userListings, setUserListings] = useState<UserListing[]>([]);
+  const [bidsLoading, setBidsLoading] = useState(true);
+  const [listingsLoading, setListingsLoading] = useState(true);
+  const [bidsError, setBidsError] = useState<string | null>(null);
+  const [listingsError, setListingsError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [feedRetryCount, setFeedRetryCount] = useState(0);
 
@@ -469,8 +473,8 @@ function DashboardContent() {
           {data?.degraded ? (
             <div className="mx-6 mt-6 rounded-2xl border border-amber-300/30 bg-amber-400/5 p-4 sm:mx-10 sm:mt-10">
               <p className="text-sm font-medium text-amber-600 dark:text-amber-400">
-                The activity feed is temporarily unavailable. Showing cached or
-                partial data.{" "}
+                {data.error ?? "The activity feed is temporarily unavailable."}{" "}
+                {data.items.length > 0 ? "Showing partial data. " : ""}
                 <button
                   type="button"
                   onClick={handleRetry}
@@ -514,6 +518,22 @@ function DashboardContent() {
               >
                 Create payment link
               </Link>
+            </div>
+          ) : data.degraded && data.items.length === 0 ? (
+            <div className="px-6 py-12 text-center sm:px-10">
+              <h3 className="text-lg font-semibold text-foreground">
+                Activity could not be loaded
+              </h3>
+              <p className="mt-2 text-sm text-muted">
+                Your payment history is not available right now. Retry to check the network again.
+              </p>
+              <button
+                type="button"
+                onClick={handleRetry}
+                className={`mt-5 rounded-xl bg-indigo-500 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-400 ${FOCUS_RING_CLASS}`}
+              >
+                Retry activity feed
+              </button>
             </div>
           ) : (
             <>
@@ -689,7 +709,16 @@ function DashboardContent() {
               <h3 className="mb-5 text-sm font-semibold uppercase tracking-[0.24em] text-muted">
                 My Active Bids
               </h3>
-              {userBids.length === 0 ? (
+              {bidsLoading ? (
+                <p role="status" className="text-sm text-muted">Loading your bids...</p>
+              ) : bidsError ? (
+                <div className="space-y-2" role="alert">
+                  <p className="text-sm text-danger">Your bids could not be loaded: {bidsError}</p>
+                  <button type="button" onClick={handleRetry} className="text-sm font-semibold text-brand underline">
+                    Retry dashboard data
+                  </button>
+                </div>
+              ) : userBids.length === 0 ? (
                 <p className="text-sm text-muted">No active bids yet.</p>
               ) : (
                 <div className="space-y-3">
@@ -732,7 +761,16 @@ function DashboardContent() {
               <h3 className="mb-5 text-sm font-semibold uppercase tracking-[0.24em] text-muted">
                 My Listings
               </h3>
-              {userListings.length === 0 ? (
+              {listingsLoading ? (
+                <p role="status" className="text-sm text-muted">Loading your listings...</p>
+              ) : listingsError ? (
+                <div className="space-y-2" role="alert">
+                  <p className="text-sm text-danger">Your listings could not be loaded: {listingsError}</p>
+                  <button type="button" onClick={handleRetry} className="text-sm font-semibold text-brand underline">
+                    Retry dashboard data
+                  </button>
+                </div>
+              ) : userListings.length === 0 ? (
                 <p className="text-sm text-muted">
                   No usernames listed yet.
                 </p>

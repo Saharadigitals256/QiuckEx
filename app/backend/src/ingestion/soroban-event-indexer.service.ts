@@ -107,18 +107,13 @@ export class SorobanEventIndexerService {
     dualReadConfig?: DualReadConfig,
     force = false,
   ): Promise<LedgerRangeResult> {
-    const storedLastLedger = force
+    const checkpoint = force
       ? null
-      : await this.checkpointRepo.getLastLedger(contractId);
-    if (storedLastLedger !== null && storedLastLedger + 1 < fromLedger) {
-      await this.recordAnomaly(contractId, "gap", undefined, storedLastLedger, {
-        requestedFromLedger: fromLedger,
-      });
-    }
-
-    const effectiveFrom = force
-      ? fromLedger
-      : await this.resolveStartLedger(contractId, fromLedger);
+      : await this.checkpointRepo.getCheckpoint(contractId);
+    const effectiveFrom = this.resolveStartLedger(fromLedger, checkpoint);
+    const resumeCursor = checkpoint && checkpoint.lastLedger >= fromLedger
+      ? checkpoint.pagingToken ?? undefined
+      : undefined;
 
     if (effectiveFrom > toLedger) {
       this.logger.log(
@@ -158,7 +153,7 @@ export class SorobanEventIndexerService {
       contractId,
       effectiveFrom,
       toLedger,
-      undefined,
+      resumeCursor,
     );
     processed += currentResult.processed;
     persisted += currentResult.persisted;
@@ -222,15 +217,21 @@ export class SorobanEventIndexerService {
           continue;
         }
 
-        await this.persistEvent(event);
-        persisted++;
-        this.eventEmitter.emit(`stellar.${event.eventType}`, event);
+        const inserted = await this.persistEvent(event);
+        if (inserted) {
+          persisted++;
+          this.eventEmitter.emit(`stellar.${event.eventType}`, event);
+        }
       }
 
       // Advance checkpoint after each page
       const lastRecord = records[records.length - 1];
       if (lastRecord) {
-        await this.checkpointRepo.saveLastLedger(contractId, lastRecord.ledger);
+        await this.checkpointRepo.saveCheckpoint(
+          contractId,
+          lastRecord.ledger,
+          lastRecord.paging_token,
+        );
       }
 
       if (!returnedCursor || records.length < PAGE_LIMIT) break;
@@ -256,13 +257,15 @@ export class SorobanEventIndexerService {
   // ---------------------------------------------------------------------------
 
   /**
-   * Returns the ledger to start from, taking the stored checkpoint into account.
-   * If a checkpoint exists and is ahead of `fromLedger`, we resume from checkpoint+1.
+   * A paging token resumes within a partially processed ledger; older checkpoints
+   * without one continue from the next ledger.
    */
-  private async resolveStartLedger(contractId: string, fromLedger: number): Promise<number> {
-    const last = await this.checkpointRepo.getLastLedger(contractId);
-    if (last !== null && last >= fromLedger) {
-      return last + 1;
+  private resolveStartLedger(
+    fromLedger: number,
+    checkpoint: { lastLedger: number; pagingToken: string | null } | null,
+  ): number {
+    if (checkpoint && checkpoint.lastLedger >= fromLedger) {
+      return checkpoint.pagingToken ? checkpoint.lastLedger : checkpoint.lastLedger + 1;
     }
     return fromLedger;
   }
@@ -308,27 +311,24 @@ export class SorobanEventIndexerService {
     return { records, nextCursor };
   }
 
-  private async persistEvent(event: QuickExContractEvent): Promise<void> {
+  private async persistEvent(event: QuickExContractEvent): Promise<boolean> {
     switch (event.eventType) {
       case "EscrowDeposited":
       case "EscrowWithdrawn":
       case "EscrowRefunded":
-        await this.escrowRepo.upsertEvent(event as EscrowEvent);
-        break;
+        return this.escrowRepo.upsertEvent(event as EscrowEvent);
       case "PrivacyToggled":
-        await this.privacyRepo.upsertEvent(event);
-        break;
+        return this.privacyRepo.upsertEvent(event);
       case "ContractPaused":
       case "AdminChanged":
       case "ContractUpgraded":
-        await this.adminRepo.upsertEvent(event as AdminEvent);
-        break;
+        return this.adminRepo.upsertEvent(event as AdminEvent);
       case "EphemeralKeyRegistered":
       case "StealthWithdrawn":
-        await this.stealthRepo.upsertEvent(event as StealthEvent);
-        break;
+        return this.stealthRepo.upsertEvent(event as StealthEvent);
       default:
         this.logger.debug(`Event ${(event as QuickExContractEvent).eventType} not persisted.`);
+        return false;
     }
   }
 
@@ -387,9 +387,11 @@ export class SorobanEventIndexerService {
       const event = this.parser.parse(record.raw);
       if (event) {
         try {
-          await this.persistEvent(event);
+          const inserted = await this.persistEvent(event);
           await this.unparsedRepo.markReplayed(record.pagingToken);
-          this.eventEmitter.emit(`stellar.${event.eventType}`, event);
+          if (inserted) {
+            this.eventEmitter.emit(`stellar.${event.eventType}`, event);
+          }
           replayed++;
         } catch (err) {
           await this.unparsedRepo.markFailed(

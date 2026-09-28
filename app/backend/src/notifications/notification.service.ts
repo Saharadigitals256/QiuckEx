@@ -20,6 +20,9 @@ import type {
   UsernameClaimedPayload,
   AutoReconciliationSucceededNotificationPayload,
   PaymentLinkExpiredPayload,
+  RecurringPaymentNotificationEvent,
+  RecurringPaymentExecutedPayload,
+  RecurringPaymentFailedPayload,
 } from "./types/notification.types";
 
 import {
@@ -213,6 +216,53 @@ export class NotificationService implements OnModuleInit {
     };
 
     await this.dispatch(payload);
+  }
+
+  @OnEvent("recurring.payment.notification", { async: true })
+  async onRecurringPaymentNotification(event: RecurringPaymentNotificationEvent): Promise<void> {
+    if (!event.recipientPublicKey || !event.eventId) return;
+
+    const common = {
+      eventId: event.eventId,
+      recipientPublicKey: event.recipientPublicKey,
+      title: event.eventType === "recurring.payment.executed" ? "Recurring Payment Sent" : "Recurring Payment Failed",
+      body:
+        event.eventType === "recurring.payment.executed"
+          ? `Recurring payment ${event.amount} ${event.asset} was executed.`
+          : `Recurring payment ${event.amount} ${event.asset} needs attention after ${event.retryCount ?? 0} retries.`,
+      occurredAt: event.occurredAt,
+      linkId: event.linkId,
+      executionId: event.executionId,
+      amount: event.amount,
+      asset: event.asset,
+      periodNumber: event.periodNumber,
+      metadata: {
+        linkId: event.linkId,
+        executionId: event.executionId,
+        periodNumber: event.periodNumber,
+        failureReason: event.failureReason,
+        retryCount: event.retryCount,
+        permanent: event.permanent,
+      },
+    };
+
+    if (event.eventType === "recurring.payment.executed" && event.transactionHash) {
+      const payload: RecurringPaymentExecutedPayload = {
+        ...common,
+        eventType: event.eventType,
+        transactionHash: event.transactionHash,
+      };
+      await this.dispatch(payload);
+    } else if (event.eventType === "recurring.payment.failed") {
+      const payload: RecurringPaymentFailedPayload = {
+        ...common,
+        eventType: event.eventType,
+        failureReason: event.failureReason ?? "Payment could not be completed",
+        retryCount: event.retryCount ?? 0,
+        permanent: event.permanent === true,
+      };
+      await this.dispatch(payload);
+    }
   }
 
   @OnEvent(NotificationEvent.UsernameClaimed, { async: true })

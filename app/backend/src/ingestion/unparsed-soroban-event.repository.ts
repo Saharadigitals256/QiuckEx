@@ -149,6 +149,21 @@ export class UnparsedSorobanEventRepository {
     await this.updateStatus(pagingToken, "replayed");
   }
 
+  async archiveReplayedBefore(cutoff: Date, batchSize = 1000): Promise<number> {
+    const { data, error } = await this.supabase
+      .getClient()
+      .rpc('archive_replayed_soroban_events', {
+        p_cutoff: cutoff.toISOString(),
+        p_batch_size: batchSize,
+      });
+
+    if (error) {
+      this.logger.error(`Failed to archive replayed Soroban events: ${error.message}`);
+      throw error;
+    }
+    return Number(data ?? 0);
+  }
+
   private async incrementAttempts(pagingToken: string): Promise<number> {
     const current = await this.getByPagingToken(pagingToken);
     if (!current) return 0;

@@ -26,6 +26,9 @@ mod fee_router_test;
 mod fee_test;
 #[cfg(test)]
 mod fuzz_test;
+mod governance;
+#[cfg(test)]
+mod governance_test;
 mod hook;
 #[cfg(test)]
 mod metadata_test;
@@ -1119,6 +1122,11 @@ impl QuickexContract {
         admin::require_initialized(&env)?;
         pause_policy::require_admin_entry_allowed(&env)?;
         hook::assert_not_reentrant(&env)?;
+        if storage::governance_is_initialized(&env) {
+            return Err(QuickexError::GovernanceRequired);
+        }
+        let caller = admin::get_admin(&env).ok_or(QuickexError::Unauthorized)?;
+        admin::require_admin(&env, &caller)?;
         hook::register_hook(&env, hook_contract)
     }
 
@@ -1127,6 +1135,11 @@ impl QuickexContract {
         admin::require_initialized(&env)?;
         pause_policy::require_admin_entry_allowed(&env)?;
         hook::assert_not_reentrant(&env)?;
+        if storage::governance_is_initialized(&env) {
+            return Err(QuickexError::GovernanceRequired);
+        }
+        let caller = admin::get_admin(&env).ok_or(QuickexError::Unauthorized)?;
+        admin::require_admin(&env, &caller)?;
         hook::unregister_hook(&env, hook_contract)
     }
 
@@ -1486,7 +1499,8 @@ impl QuickexContract {
 
     /// Upgrade the contract to a new WASM implementation (**Admin only**).
     ///
-    /// Caller must have the [`Role::Admin`] role and authorize.
+    /// Caller must have the [`Role::Admin`] role and authorize before governance bootstrap.
+    /// After governance bootstrap, upgrades must use an approved timelocked proposal.
     /// The new WASM must be pre-uploaded to the network.
     /// Emits an upgrade event for audit.
     ///
@@ -1589,7 +1603,6 @@ impl QuickexContract {
         caller: Address,
         new_version: u32,
     ) -> Result<u32, QuickexError> {
-        pause_policy::require_admin_entry_allowed(&env)?;
         admin::complete_upgrade(&env, &caller, new_version)
     }
 

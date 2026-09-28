@@ -224,7 +224,7 @@ pub struct StealthEscrowEntry {
 ///
 /// Stored under [`DataKey::FeeConfig`](crate::storage::DataKey::FeeConfig) in persistent storage.
 #[contracttype]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FeeConfig {
     /// Fee in basis points (1 = 0.01%, 100 = 1%, 10000 = 100%).
     pub fee_bps: u32,
@@ -271,7 +271,7 @@ pub struct TtlExtensionFeeConfig {
 /// that token only. A value of `fee_bps = 0` explicitly disables fees for that token even
 /// if the global config is non-zero.
 #[contracttype]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PerAssetFeeConfig {
     /// Fee in basis points for this specific token. Overrides the global `FeeConfig`.
     /// Range: 0 (no fee) to 10000 (100%).
@@ -284,7 +284,7 @@ pub struct PerAssetFeeConfig {
 
 /// Oracle fee configuration for dynamic USD-based fee collection.
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OracleFeeConfig {
     /// External oracle contract address.
     pub oracle: Address,
@@ -361,6 +361,52 @@ pub enum Role {
     /// Authorized to resolve disputes across escrows. This is independent of
     /// the Admin and Operator hierarchy.
     Arbiter = 3,
+}
+
+/// Configuration for on-chain M-of-N contract governance.
+#[contracttype]
+#[derive(Clone)]
+pub struct GovernanceConfig {
+    pub signers: Vec<Address>,
+    pub threshold: u32,
+    pub timelock_secs: u64,
+}
+
+/// Actions that can be authorized by a governance proposal.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum GovernanceAction {
+    SetAdmin(Address),
+    GrantRole(Address, Role),
+    RevokeRole(Address, Role),
+    SetPaused(bool, u32),
+    SetPauseFlags(u64, u64, u32, u32),
+    SetFeeConfig(FeeConfig),
+    SetPerAssetFee(Address, PerAssetFeeConfig),
+    SetOracleFeeConfig(OracleFeeConfig),
+    RecordOraclePrice(i128),
+    SetPlatformWallet(Address),
+    RotateFeeCollector(Address),
+    SetHookAllowed(Address, bool),
+    RegisterHook(Address),
+    UnregisterHook(Address),
+    SetUpgradeWindow(u64, u64),
+    RotateSigners(Vec<Address>, u32),
+    SetTimelock(u64),
+    Upgrade(BytesN<32>, u32),
+}
+
+/// Durable proposal state; approvals and cancellation votes are unique signer lists.
+#[contracttype]
+#[derive(Clone)]
+pub struct GovernanceProposal {
+    pub action: GovernanceAction,
+    pub proposer: Address,
+    pub approvals: Vec<Address>,
+    pub cancellation_votes: Vec<Address>,
+    pub execute_after: u64,
+    pub executed: bool,
+    pub canceled: bool,
 }
 
 /// Canonical pause reason codes.

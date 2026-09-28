@@ -53,9 +53,15 @@ export class RecurringPaymentsScheduler implements OnModuleInit {
 
       this.logger.log(`Found ${linksDue.length} recurring payment(s) due for execution`);
 
-      // Process each link sequentially to avoid race conditions
+      // Process sequentially and continue when one link fails to enqueue.
       for (const link of linksDue) {
-        await this.processRecurringPayment(link);
+        try {
+          await this.processRecurringPayment(link);
+        } catch (error) {
+          this.logger.error(
+            `Error processing recurring payment ${link.id}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          );
+        }
       }
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -86,14 +92,40 @@ export class RecurringPaymentsScheduler implements OnModuleInit {
 
   private async processRecurringPayment(link: DbRecurringPaymentLink): Promise<void> {
     const linkId = link.id;
+    const periodNumber = link.executed_count + 1;
+    let execution = await this.repository.findExecutionByPeriod(linkId, periodNumber);
+
+    if (!execution) {
+      try {
+        execution = await this.repository.createExecution({
+          recurringLinkId: linkId,
+          periodNumber,
+          scheduledAt: new Date(link.next_execution_date),
+          amount: link.amount,
+          asset: link.asset,
+        });
+        this.logger.log(`Created execution record: ${execution.id} for period ${periodNumber}`);
+      } catch (error) {
+        // Another scheduler instance may have created this unique period first.
+        execution = await this.repository.findExecutionByPeriod(linkId, periodNumber);
+        if (!execution) throw error;
+      }
+    }
 
     try {
       this.logger.log(`Processing recurring payment for link: ${linkId}`);
 
-      // Determine the next period number
       const nextPeriodNumber = link.executed_count + 1;
+      const existingExecutions = await this.repository.findExecutionsByLinkId(linkId);
+      const alreadyScheduled = existingExecutions.some(
+        (execution) => execution.period_number === nextPeriodNumber && ['pending', 'success', 'failed'].includes(execution.status),
+      );
 
-      // Create execution record
+      if (alreadyScheduled) {
+        this.logger.debug(`Recurring payment execution for link ${linkId} period ${nextPeriodNumber} already exists; skipping duplicate.`);
+        return;
+      }
+
       const execution = await this.repository.createExecution({
         recurringLinkId: linkId,
         periodNumber: nextPeriodNumber,
@@ -103,20 +135,20 @@ export class RecurringPaymentsScheduler implements OnModuleInit {
       });
 
       this.logger.log(`Created execution record: ${execution.id} for period ${nextPeriodNumber}`);
-
-      // Execute the payment
       await this.executeSinglePayment(link, execution);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error(`Error processing recurring payment ${linkId}: ${errorMessage}`, error instanceof Error ? error.stack : undefined);
 
-      // Mark as failed
       await this.schedulerService.markPaymentFailure(
         linkId,
         errorMessage,
-        0, // Initial attempt
+        0,
       );
     }
+    if (!(await this.repository.claimPendingExecution(execution.id))) return;
+
+    await this.executeSinglePayment(link, execution);
   }
 
   private async executeSinglePayment(
@@ -150,6 +182,7 @@ export class RecurringPaymentsScheduler implements OnModuleInit {
       const jobId = await this.jobQueueService.enqueue(
         JobType.RECURRING_PAYMENT,
         payload,
+        `${execution.id}:${execution.retry_count}`,
       );
 
       this.logger.log(`Payment job enqueued: ${jobId} for execution: ${executionId}`);
@@ -159,24 +192,21 @@ export class RecurringPaymentsScheduler implements OnModuleInit {
 
       const currentRetryCount = execution.retry_count + 1;
 
-      // Mark as failed
       await this.schedulerService.markPaymentFailure(
-        executionId,
+        execution.id,
         errorMessage,
         currentRetryCount,
       );
 
-      // Emit failure event
-      this.eventEmitter.emit('recurring.payment.failed', {
-        executionId,
-        linkId: link.id,
-        failureReason: errorMessage,
-        retryCount: currentRetryCount,
-        permanent: currentRetryCount >= this.maxRetries,
-      });
-
-      // Send failure notification
-      await this.notifyUser(link, execution, 'failed', undefined, errorMessage);
+      await this.notifyUser(
+        link,
+        execution,
+        'failed',
+        undefined,
+        errorMessage,
+        currentRetryCount,
+        currentRetryCount >= this.maxRetries,
+      );
 
       // Re-throw to let caller handle
       throw error;
@@ -193,28 +223,34 @@ export class RecurringPaymentsScheduler implements OnModuleInit {
     type: 'success' | 'failed' | 'due',
     transactionHash?: string,
     failureReason?: string,
+    retryCount = 0,
+    permanent = false,
   ): Promise<void> {
     try {
-      const eventType =
-        type === 'success'
-          ? 'recurring.payment.success'
-          : type === 'failed'
-          ? 'recurring.payment.failed'
-          : 'recurring.payment.due';
+      const eventType = type === 'success' ? 'recurring.payment.executed' : 'recurring.payment.failed';
+      const recipientKeys = new Set<string>();
+      if (link.payer_public_key) recipientKeys.add(link.payer_public_key);
+      if (link.destination && (type === 'success' || permanent)) recipientKeys.add(link.destination);
 
-      this.eventEmitter.emit(eventType, {
-        linkId: link.id,
-        executionId: execution.id,
-        username: link.username,
-        destination: link.destination,
-        amount: link.amount,
-        asset: link.asset,
-        periodNumber: execution.period_number,
-        transactionHash,
-        failureReason,
-      });
+      for (const recipientPublicKey of recipientKeys) {
+        this.eventEmitter.emit('recurring.payment.notification', {
+          eventType,
+          eventId: `${execution.id}:${eventType}:${recipientPublicKey}`,
+          recipientPublicKey,
+          linkId: link.id,
+          executionId: execution.id,
+          amount: link.amount,
+          asset: link.asset,
+          periodNumber: execution.period_number,
+          transactionHash,
+          failureReason,
+          retryCount,
+          permanent,
+          occurredAt: new Date().toISOString(),
+        });
+      }
 
-      this.logger.debug(`Emitted notification event: ${eventType}`);
+      this.logger.debug(`Emitted recurring notification: ${eventType}`);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error(`Error emitting notification: ${errorMessage}`, error instanceof Error ? error.stack : undefined);

@@ -70,24 +70,26 @@ function buildMocks() {
   const config = { network: "testnet" } as never;
 
   const checkpointRepo = {
+    getCheckpoint: jest.fn().mockResolvedValue(null),
     getLastLedger: jest.fn().mockResolvedValue(null),
+    saveCheckpoint: jest.fn().mockResolvedValue(undefined),
     saveLastLedger: jest.fn().mockResolvedValue(undefined),
   } as unknown as IndexerCheckpointRepository;
 
   const escrowRepo = {
-    upsertEvent: jest.fn().mockResolvedValue(undefined),
+    upsertEvent: jest.fn().mockResolvedValue(true),
   } as unknown as EscrowEventRepository;
 
   const privacyRepo = {
-    upsertEvent: jest.fn().mockResolvedValue(undefined),
+    upsertEvent: jest.fn().mockResolvedValue(true),
   } as unknown as PrivacyEventRepository;
 
   const adminRepo = {
-    upsertEvent: jest.fn().mockResolvedValue(undefined),
+    upsertEvent: jest.fn().mockResolvedValue(true),
   } as unknown as AdminEventRepository;
 
   const stealthRepo = {
-    upsertEvent: jest.fn().mockResolvedValue(undefined),
+    upsertEvent: jest.fn().mockResolvedValue(true),
   } as unknown as StealthEventRepository;
 
   const unparsedRepo = {
@@ -165,6 +167,11 @@ describe("SorobanEventIndexerService", () => {
       CONTRACT_ID,
       100,
     );
+    expect(mocks.checkpointRepo.saveCheckpoint).toHaveBeenCalledWith(
+      CONTRACT_ID,
+      100,
+      "100-1",
+    );
     expect(mocks.eventEmitter.emit).toHaveBeenCalledWith(
       "stellar.EscrowDeposited",
       expect.anything(),
@@ -173,7 +180,10 @@ describe("SorobanEventIndexerService", () => {
 
   it("skips already-indexed range when checkpoint is ahead", async () => {
     const mocks = buildMocks();
-    (mocks.checkpointRepo.getLastLedger as jest.Mock).mockResolvedValue(200);
+    (mocks.checkpointRepo.getCheckpoint as jest.Mock).mockResolvedValue({
+      lastLedger: 200,
+      pagingToken: null,
+    });
     const svc = buildService(mocks);
     mockHorizonPage([]);
 
@@ -181,6 +191,22 @@ describe("SorobanEventIndexerService", () => {
 
     expect(result.processed).toBe(0);
     expect(mocks.escrowRepo.upsertEvent).not.toHaveBeenCalled();
+  });
+
+  it("resumes within a ledger using the saved Horizon paging token", async () => {
+    const mocks = buildMocks();
+    (mocks.checkpointRepo.getCheckpoint as jest.Mock).mockResolvedValue({
+      lastLedger: 100,
+      pagingToken: "100-200",
+    });
+    const svc = buildService(mocks);
+    const fetchPage = jest
+      .spyOn(svc as never, "fetchPage" as never)
+      .mockResolvedValue({ records: [], nextCursor: undefined } as never);
+
+    await svc.indexLedgerRange(CONTRACT_ID, 100, 110);
+
+    expect(fetchPage).toHaveBeenCalledWith(CONTRACT_ID, 100, 110, "100-200");
   });
 
   it("force=true reprocesses the full range ignoring checkpoint", async () => {
@@ -343,9 +369,9 @@ describe("SorobanEventIndexerService", () => {
   it("is idempotent: calling twice with same range does not double-persist", async () => {
     const mocks = buildMocks();
     // First call: no checkpoint
-    (mocks.checkpointRepo.getLastLedger as jest.Mock)
+    (mocks.checkpointRepo.getCheckpoint as jest.Mock)
       .mockResolvedValueOnce(null) // first call
-      .mockResolvedValueOnce(100); // second call: checkpoint is at 100
+      .mockResolvedValueOnce({ lastLedger: 100, pagingToken: null });
 
     const svc = buildService(mocks);
     const record = makeEscrowDepositedRaw(100, "100-1");
@@ -358,5 +384,18 @@ describe("SorobanEventIndexerService", () => {
     expect(result2.processed).toBe(0);
     // upsertEvent called only once across both runs
     expect(mocks.escrowRepo.upsertEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not emit effects when an event row already exists", async () => {
+    const mocks = buildMocks();
+    (mocks.escrowRepo.upsertEvent as jest.Mock).mockResolvedValue(false);
+    const svc = buildService(mocks);
+    mockHorizonPage([makeEscrowDepositedRaw(100, "100-1")]);
+
+    const result = await svc.indexLedgerRange(CONTRACT_ID, 100, 100);
+
+    expect(result.processed).toBe(1);
+    expect(result.persisted).toBe(0);
+    expect(mocks.eventEmitter.emit).not.toHaveBeenCalled();
   });
 });

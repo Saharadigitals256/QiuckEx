@@ -81,6 +81,7 @@ export interface ActivityFeedResponse {
   items: ActivityFeedItem[];
   /** True when the backend returned no data or the request failed gracefully */
   degraded: boolean;
+  error?: string;
 }
 
 /**
@@ -99,13 +100,6 @@ export async function fetchActivityFeed(
     const res = await fetch(url.toString(), { method: "GET" });
 
     if (!res.ok) {
-      if (res.status >= 400 && res.status < 500) {
-        // Client error (e.g. bad public key) — return empty, not degraded
-        console.warn(
-          `Activity feed: client error ${res.status}, returning empty list`,
-        );
-        return { items: [], degraded: false };
-      }
       throw new Error(
         `Activity feed request failed with status ${res.status}`,
       );
@@ -118,6 +112,10 @@ export async function fetchActivityFeed(
     };
   } catch (error) {
     console.warn("Activity feed: backend unavailable, returning empty list:", error);
-    return { items: [], degraded: true };
+    return {
+      items: [],
+      degraded: true,
+      error: error instanceof Error ? error.message : "Activity feed is unavailable.",
+    };
   }
 }

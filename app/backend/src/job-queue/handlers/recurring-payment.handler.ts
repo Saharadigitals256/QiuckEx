@@ -8,6 +8,7 @@
  */
 
 import { Injectable, Logger } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { JobHandler, Job, CancellationToken } from '../types';
 import { RecurringPaymentPayload } from '../types/job-payloads.types';
 import { RecurringPaymentProcessor } from '../../stellar/recurring-payment-processor';
@@ -29,6 +30,7 @@ export class RecurringPaymentHandler implements JobHandler<RecurringPaymentPaylo
   constructor(
     private readonly paymentProcessor: RecurringPaymentProcessor,
     private readonly recurringPaymentsRepo: RecurringPaymentsRepository,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   /**
@@ -50,6 +52,15 @@ export class RecurringPaymentHandler implements JobHandler<RecurringPaymentPaylo
 
     const { recurringLinkId, executionId, recipientAddress, amount, asset, assetIssuer, memo, memoType } = job.payload;
 
+    const currentExecution = await this.recurringPaymentsRepo.findExecutionById(executionId);
+    if (!currentExecution) {
+      throw new PermanentJobError(`Recurring execution not found: ${executionId}`);
+    }
+    if (currentExecution.status === ExecutionStatus.SUCCESS) return;
+    if (currentExecution.status !== ExecutionStatus.PROCESSING) {
+      throw new PermanentJobError(`Recurring execution is not claimed: ${executionId}`);
+    }
+
     this.logger.log(
       `Executing recurring payment: ${amount} ${asset} to ${recipientAddress} (linkId: ${recurringLinkId}, executionId: ${executionId}, jobId: ${job.id})`,
     );
@@ -66,18 +77,10 @@ export class RecurringPaymentHandler implements JobHandler<RecurringPaymentPaylo
         referenceId: recurringLinkId,
       });
 
-      // Update execution record with success
-      await this.recurringPaymentsRepo.updateExecutionStatus(
-        executionId,
-        ExecutionStatus.SUCCESS,
-        {
-          executedAt: new Date(),
-          transactionHash,
-        },
-      );
-
-      // Increment executed count on the recurring link
-      await this.recurringPaymentsRepo.incrementExecutedCount(recurringLinkId);
+      await this.recurringPaymentsRepo.completeExecution(executionId, transactionHash);
+      await this.emitPaymentNotice(job, 'recurring.payment.executed', {
+        transactionHash,
+      });
 
       this.logger.log(
         `Recurring payment executed successfully (txHash: ${transactionHash}, executionId: ${executionId}, jobId: ${job.id})`,
@@ -181,17 +184,71 @@ export class RecurringPaymentHandler implements JobHandler<RecurringPaymentPaylo
 
     // Mark execution record as permanently failed
     try {
+      const execution = await this.recurringPaymentsRepo.findExecutionById(executionId);
       await this.recurringPaymentsRepo.updateExecutionStatus(
         executionId,
         ExecutionStatus.FAILED,
         {
-          failureReason: error.message,
+          failureReason: error instanceof PermanentJobError
+            ? `permanent: ${error.message}`
+            : `retryable: ${error.message}`,
+          retryCount: (execution?.retry_count ?? 0) + 1,
           lastRetryAt: new Date(),
         },
       );
+      await this.emitPaymentNotice(job, 'recurring.payment.failed', {
+        failureReason: error.message,
+        retryCount: (execution?.retry_count ?? 0) + 1,
+        permanent: error instanceof PermanentJobError,
+      });
     } catch (updateError) {
       this.logger.error(
         `Failed to update execution status to failed (executionId: ${executionId}, jobId: ${job.id}): ${updateError instanceof Error ? updateError.message : 'Unknown error'}`,
+      );
+    }
+  }
+
+  private async emitPaymentNotice(
+    job: Job<RecurringPaymentPayload>,
+    eventType: 'recurring.payment.executed' | 'recurring.payment.failed',
+    details: {
+      transactionHash?: string;
+      failureReason?: string;
+      retryCount?: number;
+      permanent?: boolean;
+    },
+  ): Promise<void> {
+    try {
+      const { recurringLinkId, executionId, amount, asset } = job.payload;
+      const [link, execution] = await Promise.all([
+        this.recurringPaymentsRepo.findById(recurringLinkId),
+        this.recurringPaymentsRepo.findExecutionById(executionId),
+      ]);
+      if (!link || !execution) return;
+
+      const recipientKeys = new Set<string>();
+      if (link.payer_public_key) recipientKeys.add(link.payer_public_key);
+      if (link.destination && (eventType === 'recurring.payment.executed' || details.permanent)) {
+        recipientKeys.add(link.destination);
+      }
+
+      for (const recipientPublicKey of recipientKeys) {
+        this.eventEmitter.emit('recurring.payment.notification', {
+          eventType,
+          eventId: `${executionId}:${eventType}:${recipientPublicKey}`,
+          recipientPublicKey,
+          linkId: recurringLinkId,
+          executionId,
+          amount: Number(amount),
+          asset,
+          periodNumber: execution.period_number,
+          occurredAt: new Date().toISOString(),
+          ...details,
+        });
+      }
+    } catch (error) {
+      this.logger.error(
+        `Failed to emit recurring payment notification: ${error instanceof Error ? error.message : 'Unknown error'}`,
       );
     }
   }
@@ -260,18 +317,9 @@ export class RecurringPaymentHandler implements JobHandler<RecurringPaymentPaylo
       }
     }
 
-    // Network errors are transient
-    if (
-      errorMessage.includes('network') ||
-      errorMessage.includes('timeout') ||
-      errorMessage.includes('econnrefused') ||
-      errorMessage.includes('enotfound')
-    ) {
-      return false;
-    }
-
-    // Default to transient for unknown errors (safer to retry)
-    return false;
+    // Unknown errors may have occurred after Stellar accepted the transaction.
+    // Fail closed and require reconciliation rather than risk a second payment.
+    return true;
   }
 
   /**

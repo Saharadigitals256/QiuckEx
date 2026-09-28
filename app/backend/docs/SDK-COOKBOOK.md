@@ -840,6 +840,8 @@ console.log('Ownership transferred:', ok);
 
 ### Find Available Anchors
 
+Configure trusted public anchor domains with `FIAT_RAMP_ANCHOR_DOMAINS`. Discovery reads each domain's Stellar TOML and SEP-24 `info` endpoint; the result contains only advertised assets and operation limits/fees.
+
 ```typescript
 const response = await fetch(
   `http://localhost:3000/fiat-ramps/anchors?assetCode=USDC&country=US`
@@ -847,22 +849,36 @@ const response = await fetch(
 const anchors = await response.json();
 ```
 
-### Initiate a Deposit (Buy Crypto)
+### Authenticate and Initiate a Deposit
+
+Fetch the anchor's SEP-10 challenge, then sign its transaction XDR in the user's wallet. The user's secret key stays in the wallet; submit only the signed XDR to QuickEx.
 
 ```typescript
+const challengeResponse = await fetch(
+  `http://localhost:3000/fiat-ramps/sep10/challenge?anchorDomain=anchor.example.com&userAccount=${publicKey}`
+);
+const challenge = await challengeResponse.json();
+const signedTransaction = StellarSdk.TransactionBuilder.fromXDR(
+  challenge.transaction,
+  challenge.networkPassphrase,
+);
+signedTransaction.sign(userKeypair);
+const signedChallenge = signedTransaction.toXDR();
+
 const response = await fetch('http://localhost:3000/fiat-ramps/deposit', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
     assetCode: 'USDC',
-    amount: 100,
-    userAccount: 'GBXGQ55JMQ4L2B6E7S8Y9Z0A1B2C3D4E5F6G7H8I7YWR',
+    amount: '100.00',
+    userAccount: publicKey,
     anchorDomain: 'anchor.example.com',
+    signedChallenge,
   }),
 });
 ```
 
-### Initiate a Withdrawal (Sell Crypto)
+### Initiate a Withdrawal
 
 ```typescript
 const response = await fetch('http://localhost:3000/fiat-ramps/withdraw', {
@@ -870,12 +886,15 @@ const response = await fetch('http://localhost:3000/fiat-ramps/withdraw', {
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
     assetCode: 'USDC',
-    amount: 50,
-    userAccount: 'GBXGQ55JMQ4L2B6E7S8Y9Z0A1B2C3D4E5F6G7H8I7YWR',
+    amount: '50.00',
+    userAccount: publicKey,
     anchorDomain: 'anchor.example.com',
+    signedChallenge,
   }),
 });
 ```
+
+SEP-12 status is fetched using the same client-signed SEP-10 flow at `POST /fiat-ramps/kyc/status`. Unauthenticated callback routes return `503`; status changes are not accepted as authoritative callback data.
 
 ---
 

@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "policyId": "quickex.data-retention",
+  "policyVersion": "1.0.0",
+  "effectiveFrom": "2026-09-25",
+  "owner": "privacy owner (see docs/GOVERNANCE.md)",
+  "doc": "docs/policies/DATA-RETENTION-PRIVACY-POLICY.md",
+  "mirror": "app/backend/src/privacy/retention/retention-schedule.ts",
+  "deletionServiceLevel": {
+    "acknowledgeBusinessDays": 5,
+    "executeDays": 30,
+    "executeDaysWithHold": 45,
+    "coolingOffDays": 7,
+    "challengeTtlSeconds": 900,
+    "proofPurpose": "quickex.data-deletion"
+  },
+  "methods": ["hard_delete", "pseudonymize", "redact", "aggregate_only", "not_deletable", "device_local"],
+  "holds": [
+    { "id": "legal_obligation", "maxDays": 2555, "reason": "tax/accounting retention for financial records" },
+    { "id": "regulatory_defense", "maxDays": 1825, "reason": "defend listing/sanctions decisions" },
+    { "id": "forensic_audit", "maxDays": -1, "reason": "prove where funds were directed (ADR-0006)" },
+    { "id": "security_incident_active", "maxDays": -1, "reason": "active abuse/security investigation" }
+  ],
+  "categories": [
+    { "id": "payment_link_metadata", "storage": "supabase:payment_links", "windowDays": 30, "windowFrom": "link_expiry_or_deletion", "method": "hard_delete", "containsPersonalData": "possible", "holdable": false },
+    { "id": "link_analytics_events", "storage": "supabase:analytics_views", "windowDays": 400, "windowFrom": "event_time", "method": "aggregate_only", "containsPersonalData": "possible", "holdable": false },
+    { "id": "transaction_index", "storage": "supabase:soroban_events", "windowDays": 400, "windowFrom": "ledger_time", "method": "redact", "containsPersonalData": "possible", "holdable": false, "note": "chain data is public; only off-chain memo/counterparty enrichment is redacted" },
+    { "id": "financial_records", "storage": "supabase:receipts,refunds,reconciliation", "windowDays": 2555, "windowFrom": "record_creation", "method": "pseudonymize", "containsPersonalData": "possible", "holdable": true },
+    { "id": "audit_logs", "storage": "supabase:admin_audit_logs", "windowDays": 1095, "windowFrom": "record_creation", "method": "redact", "containsPersonalData": "possible", "holdable": true },
+    { "id": "api_keys", "storage": "supabase:api_keys", "windowDays": 90, "windowFrom": "revocation", "method": "hard_delete", "containsPersonalData": false, "holdable": false, "note": "secrets are stored hashed; no plaintext key exists to delete" },
+    { "id": "webhook_deliveries", "storage": "supabase:webhook_deliveries,dlq", "windowDays": 30, "windowFrom": "delivery_time", "method": "redact", "containsPersonalData": "possible", "holdable": false },
+    { "id": "notifications", "storage": "supabase:notifications", "windowDays": 90, "windowFrom": "record_creation", "method": "hard_delete", "containsPersonalData": "possible", "holdable": false },
+    { "id": "support_bundles", "storage": "supabase:support_bundle_references", "windowDays": 30, "windowFrom": "bundle_creation", "method": "hard_delete", "containsPersonalData": "possible", "holdable": false },
+    { "id": "crash_reports", "storage": "sentry", "windowDays": 90, "windowFrom": "event_time", "method": "redact", "containsPersonalData": "possible", "holdable": false, "note": "scrubbing rules run before send; see app/backend/src/crash-reporting" },
+    { "id": "abuse_signals", "storage": "supabase:abuse_signals", "windowDays": 180, "windowFrom": "signal_time", "method": "hard_delete", "containsPersonalData": false, "holdable": true },
+    { "id": "scam_alerts", "storage": "supabase:scam_alerts", "windowDays": 365, "windowFrom": "alert_time", "method": "redact", "containsPersonalData": "possible", "holdable": true },
+    { "id": "asset_listing_evidence", "storage": "supabase:asset_listing_evidence", "windowDays": 730, "windowFrom": "delisting", "method": "redact", "containsPersonalData": false, "holdable": true },
+    { "id": "verified_assets", "storage": "supabase:verified_assets", "windowDays": 730, "windowFrom": "delisting", "method": "redact", "containsPersonalData": false, "holdable": true },
+    { "id": "contract_registry_history", "storage": "supabase:deployment_artifacts", "windowDays": -1, "windowFrom": "publish_time", "method": "not_deletable", "containsPersonalData": false, "holdable": true, "note": "audit trail of where funds were directed; deletion would destroy ADR-0006 forensic evidence" },
+    { "id": "privacy_deletion_requests", "storage": "supabase:privacy_deletion_requests", "windowDays": 730, "windowFrom": "request_completion", "method": "pseudonymize", "containsPersonalData": false, "holdable": true, "note": "stores only a salted subject hash plus the decision trail" },
+    { "id": "telegram_link_mappings", "storage": "supabase:telegram_bot_tables", "windowDays": 30, "windowFrom": "unlink", "method": "hard_delete", "containsPersonalData": true, "holdable": false },
+    { "id": "dashboard_feed_cache", "storage": "redis", "windowDays": 7, "windowFrom": "cache_write", "method": "hard_delete", "containsPersonalData": false, "holdable": false },
+    { "id": "job_replay_log", "storage": "supabase:job_replay_log", "windowDays": 90, "windowFrom": "record_creation", "method": "hard_delete", "containsPersonalData": false, "holdable": false },
+    { "id": "device_local_mobile_data", "storage": "mobile:AsyncStorage,SecureStore", "windowDays": 0, "windowFrom": "user_action", "method": "device_local", "containsPersonalData": true, "holdable": false, "note": "never sent to the backend; deleted by the user via app settings or uninstall" },
+    { "id": "onchain_escrow_state", "storage": "stellar:soroban", "windowDays": -1, "windowFrom": "ledger_time", "method": "not_deletable", "containsPersonalData": false, "holdable": true, "note": "public chain state; deletion requests cannot reach it (documented in policy §6)" }
+  ],
+  "errorCodes": {
+    "DELETION_SUBJECT_NOT_FOUND": 404,
+    "DELETION_CHALLENGE_UNKNOWN": 404,
+    "DELETION_CHALLENGE_EXPIRED": 410,
+    "DELETION_SIGNATURE_INVALID": 401,
+    "DELETION_ALREADY_EXECUTED": 409,
+    "DELETION_REQUEST_DUPLICATE": 409,
+    "DELETION_IDEMPOTENCY_CONFLICT": 409,
+    "DELETION_INTAKE_DISABLED": 403,
+    "DELETION_HOLD_ACTIVE": 409,
+    "DELETION_NOT_CANCELLABLE": 409,
+    "RETENTION_SWEEP_DISABLED": 403,
+    "RETENTION_STORE_UNAVAILABLE": 503,
+    "RETENTION_POLICY_UNAVAILABLE": 503
+  },
+  "metrics": [
+    "deletion_requests_total",
+    "deletion_request_duration_seconds",
+    "deletion_proof_failures_total",
+    "retention_sweep_records_total",
+    "retention_sweep_duration_seconds",
+    "retention_records_due"
+  ]
+}

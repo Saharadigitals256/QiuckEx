@@ -20,9 +20,11 @@ describe('RecurringPaymentsService', () => {
     listLinks: jest.fn(),
     updateLink: jest.fn(),
     updateStatus: jest.fn(),
+    updateExecutionStatus: jest.fn(),
     deleteLink: jest.fn(),
     createExecution: jest.fn(),
     findExecutionsByLinkId: jest.fn(),
+    findExecutionById: jest.fn(),
     getDueForExecution: jest.fn(),
   };
 
@@ -187,10 +189,24 @@ describe('RecurringPaymentsService', () => {
       expect(repository.updateStatus).toHaveBeenCalledWith('test-id', RecurringStatus.PAUSED);
     });
 
-    it('should throw error if link is not active', async () => {
+    it('should treat a paused link as idempotent', async () => {
       const mockLink = {
         id: 'test-id',
         status: RecurringStatus.PAUSED,
+      };
+
+      mockRepository.findById.mockResolvedValue(mockLink);
+
+      const result = await service.pauseRecurringLink('test-id');
+
+      expect(result.status).toBe(RecurringStatus.PAUSED);
+      expect(repository.updateStatus).not.toHaveBeenCalled();
+    });
+
+    it('should throw error if link is not active', async () => {
+      const mockLink = {
+        id: 'test-id',
+        status: RecurringStatus.CANCELLED,
       };
 
       mockRepository.findById.mockResolvedValue(mockLink);
@@ -204,21 +220,39 @@ describe('RecurringPaymentsService', () => {
       const mockLink = {
         id: 'test-id',
         status: RecurringStatus.PAUSED,
+        frequency: FrequencyType.MONTHLY,
       };
 
       mockRepository.findById.mockResolvedValue(mockLink);
+      mockRepository.updateLink.mockResolvedValue({ ...mockLink, next_execution_date: new Date() });
       mockRepository.updateStatus.mockResolvedValue({ ...mockLink, status: RecurringStatus.ACTIVE });
 
       const result = await service.resumeRecurringLink('test-id');
 
       expect(result.status).toBe(RecurringStatus.ACTIVE);
+      expect(repository.updateLink).toHaveBeenCalledWith('test-id', expect.objectContaining({ nextExecutionDate: expect.any(Date) }));
       expect(repository.updateStatus).toHaveBeenCalledWith('test-id', RecurringStatus.ACTIVE);
+    });
+
+    it('should treat an active link as idempotent', async () => {
+      const mockLink = {
+        id: 'test-id',
+        status: RecurringStatus.ACTIVE,
+      };
+
+      mockRepository.findById.mockResolvedValue(mockLink);
+
+      const result = await service.resumeRecurringLink('test-id');
+
+      expect(result.status).toBe(RecurringStatus.ACTIVE);
+      expect(repository.updateStatus).not.toHaveBeenCalled();
+      expect(repository.updateLink).not.toHaveBeenCalled();
     });
 
     it('should throw error if link is not paused', async () => {
       const mockLink = {
         id: 'test-id',
-        status: RecurringStatus.ACTIVE,
+        status: RecurringStatus.CANCELLED,
       };
 
       mockRepository.findById.mockResolvedValue(mockLink);
@@ -254,6 +288,28 @@ describe('RecurringPaymentsService', () => {
       const nextDate = service.calculateNextExecutionDate(currentDate, FrequencyType.YEARLY);
       
       expect(nextDate.getFullYear()).toBe(currentDate.getFullYear() + 1);
+    });
+  });
+
+  describe('markPaymentFailure', () => {
+    it('loads and updates an execution by its execution ID', async () => {
+      const execution = {
+        id: 'execution-id',
+        recurring_link_id: 'link-id',
+        period_number: 1,
+      };
+      mockRepository.findExecutionById.mockResolvedValue(execution);
+      mockRepository.updateExecutionStatus.mockResolvedValue({ ...execution, status: 'failed' });
+
+      await service.markPaymentFailure('execution-id', 'temporary outage', 3);
+
+      expect(repository.findExecutionById).toHaveBeenCalledWith('execution-id');
+      expect(repository.findExecutionsByLinkId).not.toHaveBeenCalled();
+      expect(repository.updateExecutionStatus).toHaveBeenCalledWith(
+        'execution-id',
+        'failed',
+        expect.objectContaining({ failureReason: 'temporary outage', retryCount: 3 }),
+      );
     });
   });
 });

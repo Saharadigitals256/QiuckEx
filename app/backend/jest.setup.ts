@@ -10,6 +10,11 @@ process.env.SUPABASE_ANON_KEY = 'test-anon-key-for-testing';
 process.env.NODE_ENV = 'test';
 process.env.PORT = '4000';
 
+// Admin authorization tests (#204) need a deterministic admin credential so
+// server-side role checks can be exercised without touching real secrets.
+process.env.ADMIN_API_KEY = process.env.ADMIN_API_KEY || 'test-admin-api-key';
+process.env.ADMIN_ROLE = process.env.ADMIN_ROLE || 'admin';
+
 // Raise rate limits well above what a single e2e test file's sequential
 // requests would ever hit, so real throttling behavior doesn't leak into
 // unrelated tests that happen to share the same in-memory throttler storage.

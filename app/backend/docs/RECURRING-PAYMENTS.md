@@ -4,6 +4,8 @@
 
 The Recurring Payment Link Engine enables subscription-style payments on Stellar, allowing users to create payment links that automatically execute at regular intervals (daily, weekly, monthly, or yearly).
 
+> **Custody limitation:** the current Stellar processor signs transactions with `STELLAR_SECRET_KEY`. This is a platform-custodial payment path, not a self-custodial payer authorization flow. Do not enable it for production under a self-custody requirement until payment authorization is moved to a payer-controlled Soroban contract or equivalent signed-permission design.
+
 ## Features
 
 ### Core Capabilities
@@ -36,7 +38,7 @@ Two main tables manage recurring payments:
 
 2. **recurring_payment_executions**: Tracks individual payment executions
    - Period number and scheduling
-   - Execution status (pending, success, failed, skipped)
+   - Execution status (pending, processing, success, failed, skipped)
    - Transaction hash and failure reasons
    - Retry count and notification tracking
 
@@ -106,6 +108,7 @@ POST /links/recurring
   "asset": "XLM",
   "frequency": "monthly",
   "username": "john_doe",
+   "payerPublicKey": "G...",
   "startDate": "2025-04-01T00:00:00Z",
   "totalPeriods": 12,
   "memo": "Monthly subscription",
@@ -184,7 +187,7 @@ The system emits the following events:
 - `recurring.payment.executed` - Payment executed successfully
 - `recurring.payment.failed` - Payment failed (with retry info)
 
-These events integrate with the existing notification engine to send emails, push notifications, or webhook callbacks.
+Execution and failure notices are delivered through the existing notification preferences. The payer public key is optional and is only used when the payer has opted into a channel; the destination receives success notices and permanent-failure notices. Retryable intermediate failures are sent to the payer, while the merchant is not notified until the retry policy reaches a terminal state.
 
 ## Error Handling
 
@@ -204,7 +207,7 @@ These events integrate with the existing notification engine to send emails, pus
 - Network errors
 - Stellar transaction failures
 
-Failed payments are retried up to `RECURRING_PAYMENT_MAX_RETRY` times with exponential backoff.
+The queue retries known rejected Stellar transactions. After queue attempts are exhausted, retryable errors are resubmitted as the same execution after `RECURRING_PAYMENT_RETRY_BACKOFF_MS`; retry cycles are bounded by `RECURRING_PAYMENT_MAX_RETRY`. Ambiguous submit/acknowledgment errors fail closed for reconciliation because rebroadcasting a newly built transaction could debit twice. Execution claims and queue idempotency keys prevent scheduler ticks from creating duplicate jobs, and successful status/count/schedule updates are committed atomically.
 
 ## Testing
 

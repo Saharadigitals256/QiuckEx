@@ -136,3 +136,8 @@ export interface TemplateExecutionPayload {
   /** Preview scope (optional) */
   previewScope?: string;
 }
+
+/** Explicit transaction hashes to re-fetch and rebuild derived receipt records. */
+export interface DerivedRecordRepairPayload {
+  transactionHashes: string[];
+}
