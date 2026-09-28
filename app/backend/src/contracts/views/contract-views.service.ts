@@ -41,6 +41,8 @@ export interface EscrowSummaryView {
   beneficiary: string;
   amount: string;
   assetCode: string;
+  /** Current state of the escrow: pending | spent | refunded | expired | disputed */
+  status: "pending" | "spent" | "refunded" | "expired" | "disputed";
   released: boolean;
   refunded: boolean;
   expiryLedger: number;
@@ -57,6 +59,18 @@ export interface LinkSummaryView {
   active: boolean;
   /** Ledger number when the link record expires from contract storage, or null if TTL-free */
   expiresAtLedger: number | null;
+}
+
+export interface PrivacyAwareEscrowView {
+  token: string;
+  amountDue: string | null;
+  amountPaid: string | null;
+  owner: string | null;
+  status: "pending" | "spent" | "expired" | "refunded" | "disputed";
+  createdAt: number;
+  expiresAt: number;
+  arbiter: string | null;
+  memo: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -132,6 +146,19 @@ export class ContractViewsService {
    */
   async getEscrowSummary(escrowId: string): Promise<EscrowSummaryView> {
     return this.cached(`escrow:${escrowId}`, () => this.fetchEscrowSummary(escrowId));
+  }
+
+  /**
+   * Detailed escrow view with privacy-aware field redaction.
+   * Calls the contract's `get_escrow_details` view which returns a
+   * privacy-aware view: sensitive fields (amount, owner, arbiter, memo)
+   * are redacted when the escrow owner has privacy enabled and the
+   * caller is not the owner or arbiter.
+   *
+   * Throws {@link NotFoundException} when the escrow does not exist.
+   */
+  async getEscrowDetails(escrowId: string, caller: string): Promise<PrivacyAwareEscrowView> {
+    return this.cached(`escrow_details:${escrowId}:${caller}`, () => this.fetchEscrowDetails(escrowId, caller));
   }
 
   /**
@@ -228,6 +255,25 @@ export class ContractViewsService {
     }
 
     return this.parseEscrowSummary(result, escrowId);
+  }
+
+  private async fetchEscrowDetails(escrowId: string, caller: string): Promise<PrivacyAwareEscrowView> {
+    const contractId = this.requireContractId();
+
+    const args = [
+      StellarSdk.nativeToScVal(escrowId, { type: 'string' }),
+      StellarSdk.nativeToScVal(caller, { type: 'address' }),
+    ];
+    const result = await this.simulateContractView(contractId, 'get_escrow_details', args);
+
+    if (!result) {
+      throw new NotFoundException({
+        error: 'ESCROW_NOT_FOUND',
+        message: `Escrow "${escrowId}" not found or expired.`,
+      });
+    }
+
+    return this.parseEscrowDetails(result);
   }
 
   private async fetchLinkSummary(identifier: string): Promise<LinkSummaryView> {
@@ -350,6 +396,17 @@ export class ContractViewsService {
     const map          = this.scValToMap(val);
     const expiryLedger = Number(StellarSdk.scValToNative(this.requireMapField(map, 'expiry_ledger')));
     const currentLedger = 0; // Would be fetched from horizon in a full impl; safe default
+    const statusVal    = this.requireMapField(map, 'status');
+    const statusNum    = Number(StellarSdk.scValToNative(statusVal));
+    // Map contract EscrowStatus enum: 0=Pending, 1=Spent, 2=Expired, 3=Refunded, 4=Disputed
+    const statusMap: Record<number, "pending" | "spent" | "expired" | "refunded" | "disputed"> = {
+      0: "pending",
+      1: "spent",
+      2: "expired",
+      3: "refunded",
+      4: "disputed",
+    };
+    const status = statusMap[statusNum] ?? "pending";
 
     return {
       id:            escrowId,
@@ -357,10 +414,58 @@ export class ContractViewsService {
       beneficiary:   String(StellarSdk.scValToNative(this.requireMapField(map, 'beneficiary'))),
       amount:        String(StellarSdk.scValToNative(this.requireMapField(map, 'amount'))),
       assetCode:     String(StellarSdk.scValToNative(this.requireMapField(map, 'asset_code'))),
-      released:      Boolean(StellarSdk.scValToNative(this.requireMapField(map, 'released'))),
-      refunded:      Boolean(StellarSdk.scValToNative(this.requireMapField(map, 'refunded'))),
+      status,
+      released:      status === "spent",
+      refunded:      status === "refunded",
       expiryLedger,
       expired:       currentLedger > 0 && currentLedger > expiryLedger,
+    };
+  }
+
+  private parseEscrowDetails(val: StellarSdk.xdr.ScVal): PrivacyAwareEscrowView {
+    const map = this.scValToMap(val);
+
+    const statusVal = this.requireMapField(map, 'status');
+    const statusNum = Number(StellarSdk.scValToNative(statusVal));
+    const statusMap: Record<number, "pending" | "spent" | "expired" | "refunded" | "disputed"> = {
+      0: "pending",
+      1: "spent",
+      2: "expired",
+      3: "refunded",
+      4: "disputed",
+    };
+    const status = statusMap[statusNum] ?? "pending";
+
+    const getOptionalString = (key: string): string | null => {
+      const field = this.getMapField(map, key);
+      if (!field) return null;
+      try {
+        return String(StellarSdk.scValToNative(field));
+      } catch {
+        return null;
+      }
+    };
+
+    const getOptionalNumber = (key: string): string | null => {
+      const field = this.getMapField(map, key);
+      if (!field) return null;
+      try {
+        return String(StellarSdk.scValToNative(field));
+      } catch {
+        return null;
+      }
+    };
+
+    return {
+      token:      String(StellarSdk.scValToNative(this.requireMapField(map, 'token'))),
+      amountDue:  getOptionalNumber('amount_due'),
+      amountPaid: getOptionalNumber('amount_paid'),
+      owner:      getOptionalString('owner'),
+      status,
+      createdAt:  Number(StellarSdk.scValToNative(this.requireMapField(map, 'created_at'))),
+      expiresAt:  Number(StellarSdk.scValToNative(this.requireMapField(map, 'expires_at'))),
+      arbiter:    getOptionalString('arbiter'),
+      memo:       getOptionalString('memo'),
     };
   }
 

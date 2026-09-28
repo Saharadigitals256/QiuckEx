@@ -15,6 +15,7 @@ import {
   type FeeConfigView,
   type LinkSummaryView,
   type PauseStateView,
+  type PrivacyAwareEscrowView,
 } from './contract-views.service';
 
 @ApiTags('contracts')
@@ -77,6 +78,25 @@ export class ContractViewsController {
   @ApiResponse({ status: 404, description: 'Escrow not found or TTL expired.' })
   getEscrow(@Param('id') id: string): Promise<EscrowSummaryView> {
     return this.views.getEscrowSummary(id);
+  }
+
+  @Get('escrow/:id/details')
+  @ApiOperation({
+    summary: 'Detailed escrow view with privacy-aware field redaction',
+    description:
+      'Returns a detailed view of the escrow with privacy-aware field redaction. ' +
+      'Sensitive fields (amount, owner, arbiter, memo) are redacted when the ' +
+      'escrow owner has privacy enabled and the caller is not the owner or arbiter.',
+  })
+  @ApiParam({ name: 'id', description: 'On-chain escrow identifier' })
+  @ApiParam({ name: 'caller', description: 'Caller address for privacy check', required: false })
+  @ApiResponse({ status: 200, description: 'Detailed escrow view.' })
+  @ApiResponse({ status: 404, description: 'Escrow not found or TTL expired.' })
+  getEscrowDetails(
+    @Param('id') id: string,
+    @Param('caller') caller?: string,
+  ): Promise<PrivacyAwareEscrowView> {
+    return this.views.getEscrowDetails(id, caller ?? '');
   }
 
   @Get('link/:identifier')
