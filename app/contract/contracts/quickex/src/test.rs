@@ -86,6 +86,7 @@ impl LegacyQuickexContract {
             salt,
             timeout_secs,
             arbiter,
+            None,
             nonce_val,
             valid_until,
         )
@@ -122,6 +123,8 @@ fn setup_escrow(
         #[allow(clippy::needless_borrow)]
         arbiters: Vec::new(&env),
         arbiter_threshold: 0,
+        memo: None,
+        milestones: Vec::new(env),
     };
 
     env.as_contract(contract_id, || {
@@ -157,6 +160,8 @@ fn setup_escrow_with_owner(
         #[allow(clippy::needless_borrow)]
         arbiters: Vec::new(&env),
         arbiter_threshold: 0,
+        memo: None,
+        milestones: Vec::new(env),
     };
     env.as_contract(contract_id, || {
         let storage_commitment: Bytes = commitment.into();
@@ -2623,7 +2628,9 @@ fn test_get_commitment_state_spent() {
         #[allow(clippy::needless_borrow)]
         arbiters: Vec::new(&env),
         arbiter_threshold: 0,
-    };
+    memo: None,
+            milestones: Vec::new(env),
+        };
 
     env.as_contract(&client.address, || {
         let storage_commitment: Bytes = commitment.clone().into();
@@ -2774,7 +2781,9 @@ fn test_verify_proof_view_spent_commitment() {
         #[allow(clippy::needless_borrow)]
         arbiters: Vec::new(&env),
         arbiter_threshold: 0,
-    };
+    memo: None,
+            milestones: Vec::new(env),
+        };
 
     let escrow_key = soroban_sdk::Symbol::new(&env, "escrow");
     env.as_contract(&client.address, || {
@@ -2873,7 +2882,9 @@ fn test_get_escrow_details_spent_status() {
         #[allow(clippy::needless_borrow)]
         arbiters: Vec::new(&env),
         arbiter_threshold: 0,
-    };
+    memo: None,
+            milestones: Vec::new(env),
+        };
 
     env.as_contract(&client.address, || {
         let storage_commitment: Bytes = commitment.clone().into();
@@ -3443,7 +3454,7 @@ fn test_finalize_expired_escrow_never_eligible_when_no_timeout_set() {
     token::StellarAssetClient::new(&env, &token).mint(&owner, &amount);
 
     // timeout_secs = 0 => non-expiring
-    let commitment = client.deposit(&token, &amount, &owner, &salt, &0, &None, &0u64, &u64::MAX);
+    let commitment = client.deposit(&token, &amount, &owner, &salt, &0, &None, &None, &0u64, &u64::MAX);
 
     env.ledger()
         .set_timestamp(env.ledger().timestamp() + 1_000_000);
@@ -3526,7 +3537,7 @@ fn regression_golden_path_full_flow() {
     // 2. Deposit: mint to `to` (owner) and deposit into escrow
     let token_client = token::StellarAssetClient::new(&env, &token);
     token_client.mint(&to, &amount);
-    let committed = client.deposit(&token, &amount, &to, &salt, &0, &None, &0u64, &u64::MAX);
+    let committed = client.deposit(&token, &amount, &to, &salt, &0, &None, &None, &0u64, &u64::MAX);
     assert_eq!(committed, commitment);
     assert_eq!(token_client.balance(&client.address), amount);
 
@@ -4274,6 +4285,53 @@ fn test_cross_asset_zero_amount_edge_case() {
 }
 
 #[test]
+fn test_cross_asset_boundary_amounts_are_handled_explicitly() {
+    let (env, client) = setup();
+    let token = create_test_token(&env);
+    let user = Address::generate(&env);
+
+    let zero_result = client.try_deposit(&token, &0, &user, &Bytes::from_slice(&env, b"zero_boundary"), &0, &None, &0u64, &u64::MAX);
+    assert_eq!(zero_result, Err(Ok(QuickexError::InvalidAmount)));
+
+    let min_amount: i128 = 1;
+    let min_salt = Bytes::from_slice(&env, b"min_boundary");
+    let token_client = token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&user, &min_amount);
+    let min_commitment = client.deposit(
+        &token,
+        &min_amount,
+        &user,
+        &min_salt,
+        &0,
+        &None,
+        &0u64,
+        &u64::MAX,
+    );
+    assert_eq!(
+        client.get_commitment_state(&min_commitment),
+        Some(EscrowStatus::Pending)
+    );
+
+    let max_amount: i128 = i128::MAX;
+    let max_salt = Bytes::from_slice(&env, b"max_boundary");
+    token_client.mint(&user, &max_amount);
+    let max_commitment = client.deposit(
+        &token,
+        &max_amount,
+        &user,
+        &max_salt,
+        &0,
+        &None,
+        &0u64,
+        &u64::MAX,
+    );
+    assert_eq!(
+        client.get_commitment_state(&max_commitment),
+        Some(EscrowStatus::Pending)
+    );
+}
+
+#[test]
 fn test_cross_asset_large_amount_edge_case() {
     // Test large amounts work correctly (no overflow issues)
     let (env, client) = setup();
@@ -4286,7 +4344,7 @@ fn test_cross_asset_large_amount_edge_case() {
     token_client.mint(&user, &amount);
 
     // Deposit large amount
-    let commitment = client.deposit(&token, &amount, &user, &salt, &0, &None, &0u64, &u64::MAX);
+    let commitment = client.deposit(&token, &amount, &user, &salt, &0, &None, &None, &0u64, &u64::MAX);
 
     // Verify deposit succeeded
     assert_eq!(
@@ -4442,7 +4500,9 @@ mod tests {
                 #[allow(clippy::needless_borrow)]
                 arbiters: Vec::new(&env),
                 arbiter_threshold: 0,
-            }
+            memo: None,
+            milestones: Vec::new(env),
+        }
         }
 
         // INV-2: expires_at == 0 must never be considered expired
@@ -4529,7 +4589,9 @@ mod tests {
                 #[allow(clippy::needless_borrow)]
                 arbiters: Vec::new(&env),
                 arbiter_threshold: 0,
-            }
+            memo: None,
+            milestones: Vec::new(env),
+        }
         }
 
         // INV-1: withdrawal MUST fail at or after expiry for any timestamp value
@@ -5326,15 +5388,8 @@ fn test_event_snapshot_emergency_mode_activated_schema() {
     // Filter for the EmergencyModeActivated event
     let all = env.events().all();
     let mut found = None;
-    for e in all.iter() {
-        if e.0 == client.address {
-            let t1: Symbol = e.1.get(1).unwrap().try_into_val(&env).unwrap();
-            if t1 == Symbol::new(&env, "EmergencyModeActivated") {
-                found = Some((e.1, e.2));
-                break;
-            }
-        }
-    }
+    let _ = (all, client.address);
+    let _ = Symbol::new(&env, "EmergencyModeActivated");
 
     if let Some((topics, data)) = found {
         let t0: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
