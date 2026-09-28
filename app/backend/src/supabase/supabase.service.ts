@@ -1113,4 +1113,285 @@ export class SupabaseService {
     if (error) this.handleError(error);
     return data as VerifiedAssetDbRecord | null;
   }
+
+  // ---------------------------------------------------------------------------
+  // Username reservation expiry & anti-squatting (issue #194)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Reserve a username for a wallet.
+   *
+   * Idempotency: if `reservationId` already exists for the same (username, publicKey),
+   * the existing row is returned without mutation.
+   *
+   * Throws ConflictException  — username is reserved by a *different* wallet.
+   * Throws GoneException      — username is permanently claimed.
+   */
+  async reserveUsername(
+    username: string,
+    publicKey: string,
+    reservationId: string,
+    reservedUntil: string,
+  ): Promise<{ reservationId: string; username: string; reservedBy: string; reservedUntil: string }> {
+    // Fetch current row to check ownership_status.
+    const { data: existing, error: fetchErr } = await this.client
+      .from("usernames")
+      .select("username, public_key, ownership_status, reservation_id, reserved_by, reserved_until")
+      .eq("username", username)
+      .maybeSingle();
+    if (fetchErr) this.handleError(fetchErr);
+
+    if (existing) {
+      const status = existing.ownership_status as string;
+
+      if (status === "claimed") {
+        const { GoneException } = await import("@nestjs/common");
+        throw new GoneException({
+          code: "USERNAME_ALREADY_CLAIMED",
+          message: `Username '${username}' is permanently claimed`,
+        });
+      }
+
+      if (status === "reserved") {
+        // Idempotent: same reservationId and same owner → return existing.
+        if (existing.reservation_id === reservationId && existing.reserved_by === publicKey) {
+          return {
+            reservationId: existing.reservation_id as string,
+            username: existing.username as string,
+            reservedBy: existing.reserved_by as string,
+            reservedUntil: existing.reserved_until as string,
+          };
+        }
+        // Active reservation by a different wallet.
+        const { ConflictException: CE } = await import("@nestjs/common");
+        throw new CE({
+          code: "RESERVATION_CONFLICT",
+          message: `Username '${username}' is already reserved`,
+        });
+      }
+    }
+
+    // Insert a placeholder row for names not yet in the table, or update
+    // available/expired rows.
+    if (!existing) {
+      const { error: insertErr } = await this.client.from("usernames").insert({
+        username,
+        public_key: publicKey,
+        ownership_status: "reserved",
+        reserved_until: reservedUntil,
+        reserved_by: publicKey,
+        reservation_id: reservationId,
+      });
+      if (insertErr) this.handleError(insertErr);
+    } else {
+      const { error: updateErr } = await this.client
+        .from("usernames")
+        .update({
+          ownership_status: "reserved",
+          reserved_until: reservedUntil,
+          reserved_by: publicKey,
+          reservation_id: reservationId,
+        })
+        .eq("username", username)
+        .in("ownership_status", ["available", "expired"]);
+      if (updateErr) this.handleError(updateErr);
+    }
+
+    return { reservationId, username, reservedBy: publicKey, reservedUntil };
+  }
+
+  /**
+   * Release a reservation held by `publicKey`.
+   * Sets ownership_status back to 'available' and clears reserved_* columns.
+   */
+  async releaseUsernameReservation(reservationId: string, publicKey: string): Promise<void> {
+    const { error } = await this.client
+      .from("usernames")
+      .update({
+        ownership_status: "available",
+        reserved_until: null,
+        reserved_by: null,
+        reservation_id: null,
+      })
+      .eq("reservation_id", reservationId)
+      .eq("reserved_by", publicKey)
+      .eq("ownership_status", "reserved");
+    if (error) this.handleError(error);
+  }
+
+  /**
+   * Fetch the reservation row for a given reservationId.
+   * Returns null if not found.
+   */
+  async getReservation(reservationId: string): Promise<{
+    username: string;
+    reserved_by: string | null;
+    reserved_until: string | null;
+    reservation_id: string | null;
+    ownership_status: string;
+  } | null> {
+    const { data, error } = await this.client
+      .from("usernames")
+      .select("username, reserved_by, reserved_until, reservation_id, ownership_status")
+      .eq("reservation_id", reservationId)
+      .maybeSingle();
+    if (error) this.handleError(error);
+    return data as {
+      username: string;
+      reserved_by: string | null;
+      reserved_until: string | null;
+      reservation_id: string | null;
+      ownership_status: string;
+    } | null;
+  }
+
+  /**
+   * Expire all reservations whose `reserved_until` has passed.
+   * Returns the number of rows updated.
+   */
+  async sweepExpiredReservations(): Promise<number> {
+    const now = new Date().toISOString();
+    const { data, error } = await this.client
+      .from("usernames")
+      .update({
+        ownership_status: "expired",
+        reserved_until: null,
+        reserved_by: null,
+        reservation_id: null,
+      })
+      .eq("ownership_status", "reserved")
+      .lt("reserved_until", now)
+      .select("id");
+    if (error) this.handleError(error);
+    return (data ?? []).length;
+  }
+
+  /**
+   * Flag `claimed` usernames whose last_active_at is older than `olderThanDate`
+   * (and have not already been flagged) by setting `squatting_flagged_at`.
+   * Processes up to `limit` rows per call.
+   * Returns the number of rows flagged.
+   */
+  async flagInactiveUsernames(olderThanDate: string, limit: number): Promise<number> {
+    const now = new Date().toISOString();
+    const { data, error } = await this.client
+      .from("usernames")
+      .update({ squatting_flagged_at: now })
+      .eq("ownership_status", "claimed")
+      .is("squatting_flagged_at", null)
+      .lt("last_active_at", olderThanDate)
+      .limit(limit)
+      .select("id");
+    if (error) this.handleError(error);
+    return (data ?? []).length;
+  }
+
+  /**
+   * Clear the squatting flag for an owner-verified username after admin review.
+   */
+  async clearSquattingFlag(username: string, publicKey: string): Promise<void> {
+    const { error } = await this.client
+      .from("usernames")
+      .update({ squatting_flagged_at: null })
+      .eq("username", username)
+      .eq("public_key", publicKey);
+    if (error) this.handleError(error);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Username reconciliation (issue #193)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Paginated list of `claimed` usernames for on-chain reconciliation.
+   * Cursor is the ISO `created_at` timestamp of the last processed row.
+   */
+  async fetchClaimedUsernames(
+    limit: number,
+    cursor?: string,
+  ): Promise<Array<{ id: string; username: string; public_key: string; created_at: string; last_active_at: string | null }>> {
+    let query = this.client
+      .from("usernames")
+      .select("id, username, public_key, created_at, last_active_at")
+      .eq("ownership_status", "claimed")
+      .order("created_at", { ascending: true })
+      .limit(limit);
+    if (cursor) {
+      query = query.gt("created_at", cursor);
+    }
+    const { data, error } = await query;
+    if (error) this.handleError(error);
+    return (data ?? []) as Array<{ id: string; username: string; public_key: string; created_at: string; last_active_at: string | null }>;
+  }
+
+  /**
+   * Flag a username for on-chain reconciliation review (e.g. account not found).
+   */
+  async flagUsernameForReview(username: string, reason: string): Promise<void> {
+    const { error } = await this.client
+      .from("usernames")
+      .update({ ownership_status: "flagged", squatting_flagged_at: new Date().toISOString() })
+      .eq("username", username);
+    if (error) this.handleError(error);
+    this.logger.log(`Username '${username}' flagged for review: ${reason}`);
+  }
+
+  /**
+   * Restore a flagged username to `claimed` status.
+   */
+  async unflagUsername(username: string): Promise<void> {
+    const { error } = await this.client
+      .from("usernames")
+      .update({ ownership_status: "claimed", squatting_flagged_at: null })
+      .eq("username", username);
+    if (error) this.handleError(error);
+  }
+
+  /**
+   * Return the lightweight ownership/activity state for a single username.
+   */
+  async getOwnershipStatus(
+    username: string,
+  ): Promise<{ ownership_status: string; last_active_at: string | null; public_key: string } | null> {
+    const { data, error } = await this.client
+      .from("usernames")
+      .select("ownership_status, last_active_at, public_key")
+      .eq("username", username)
+      .maybeSingle();
+    if (error) this.handleError(error);
+    return data as { ownership_status: string; last_active_at: string | null; public_key: string } | null;
+  }
+
+  /**
+   * Persist a username reconciliation run report.
+   * Idempotent on run_id.
+   */
+  async persistUsernameReconciliationRun(report: {
+    runId: string;
+    startedAt: string;
+    completedAt: string;
+    durationMs: number;
+    processed: number;
+    confirmed: number;
+    flagged: number;
+    skipped: number;
+  }): Promise<void> {
+    const { error } = await this.client
+      .from("username_reconciliation_runs")
+      .upsert(
+        {
+          run_id: report.runId,
+          started_at: report.startedAt,
+          completed_at: report.completedAt,
+          duration_ms: report.durationMs,
+          processed: report.processed,
+          confirmed: report.confirmed,
+          flagged: report.flagged,
+          skipped: report.skipped,
+          report,
+        },
+        { onConflict: "run_id" },
+      );
+    if (error) this.handleError(error);
+  }
 }
