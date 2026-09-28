@@ -82,3 +82,24 @@ Before production release, replace these placeholders with real values:
 - `REPLACE_WITH_RELEASE_CERT_SHA256_FINGERPRINT` in `assetlinks.json`.
 
 A debug screen is available at `/deep-link-debug` to validate deep link parsing and preview the target route inside the app.
+
+## Environment configuration
+
+The app reads these `EXPO_PUBLIC_*` variables at runtime. They are checked by
+`node scripts/docs-check/check.mjs --only mobile`, so a variable added to the app
+without being documented here fails CI.
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `EXPO_PUBLIC_API_URL` | yes | `http://localhost:4000` | Base URL of the QuickEx backend. Read by `app.config.ts` and by every service in `services/`. |
+| `EXPO_PUBLIC_SUPABASE_URL` | yes | none | Supabase project URL used by `services/supabase.ts` for client-side reads. |
+| `EXPO_PUBLIC_SUPABASE_ANON_KEY` | yes | none | Supabase **anon** key. Never the service-role key: it would ship inside the bundle. |
+
+The backend base URL must match the port the backend actually listens on. The
+default (`http://localhost:4000`) is what `pnpm --filter @quickex/backend dev`
+serves; if you run it on another port, set the variable rather than editing
+`app.config.ts`.
+
+Because these are `EXPO_PUBLIC_*`, their values are compiled into the app bundle
+and are readable by anyone who has the bundle. Only publish values that are
+public by design.

@@ -1113,4 +1113,102 @@ export class SupabaseService {
     if (error) this.handleError(error);
     return data as VerifiedAssetDbRecord | null;
   }
+
+  // ---------------------------------------------------------------------------
+  // Username on-chain claim reconciliation (issue #193)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Paginated list of `claimed` usernames for on-chain reconciliation.
+   * `cursor` is the ISO `created_at` timestamp of the last processed row.
+   */
+  async fetchClaimedUsernames(
+    limit: number,
+    cursor?: string,
+  ): Promise<Array<{ id: string; username: string; public_key: string; created_at: string; last_active_at: string | null }>> {
+    let query = this.client
+      .from("usernames")
+      .select("id, username, public_key, created_at, last_active_at")
+      .eq("ownership_status", "claimed")
+      .order("created_at", { ascending: true })
+      .limit(limit);
+    if (cursor) {
+      query = query.gt("created_at", cursor);
+    }
+    const { data, error } = await query;
+    if (error) this.handleError(error);
+    return (data ?? []) as Array<{ id: string; username: string; public_key: string; created_at: string; last_active_at: string | null }>;
+  }
+
+  /**
+   * Flag a username for on-chain reconciliation review (account not found on Horizon).
+   * Sets `ownership_status = 'flagged'` and records the flag timestamp.
+   */
+  async flagUsernameForReview(username: string, reason: string): Promise<void> {
+    const { error } = await this.client
+      .from("usernames")
+      .update({ ownership_status: "flagged", squatting_flagged_at: new Date().toISOString() })
+      .eq("username", username);
+    if (error) this.handleError(error);
+    this.logger.log(`Username '${username}' flagged for review: ${reason}`);
+  }
+
+  /**
+   * Restore a flagged username back to `claimed` status after admin review.
+   */
+  async unflagUsername(username: string): Promise<void> {
+    const { error } = await this.client
+      .from("usernames")
+      .update({ ownership_status: "claimed", squatting_flagged_at: null })
+      .eq("username", username);
+    if (error) this.handleError(error);
+  }
+
+  /**
+   * Return the lightweight ownership/activity state for a single username.
+   */
+  async getOwnershipStatus(
+    username: string,
+  ): Promise<{ ownership_status: string; last_active_at: string | null; public_key: string } | null> {
+    const { data, error } = await this.client
+      .from("usernames")
+      .select("ownership_status, last_active_at, public_key")
+      .eq("username", username)
+      .maybeSingle();
+    if (error) this.handleError(error);
+    return data as { ownership_status: string; last_active_at: string | null; public_key: string } | null;
+  }
+
+  /**
+   * Persist a username reconciliation run report for audit / diagnostics.
+   * Idempotent on `run_id`.
+   */
+  async persistUsernameReconciliationRun(report: {
+    runId: string;
+    startedAt: string;
+    completedAt: string;
+    durationMs: number;
+    processed: number;
+    confirmed: number;
+    flagged: number;
+    skipped: number;
+  }): Promise<void> {
+    const { error } = await this.client
+      .from("username_reconciliation_runs")
+      .upsert(
+        {
+          run_id: report.runId,
+          started_at: report.startedAt,
+          completed_at: report.completedAt,
+          duration_ms: report.durationMs,
+          processed: report.processed,
+          confirmed: report.confirmed,
+          flagged: report.flagged,
+          skipped: report.skipped,
+          report,
+        },
+        { onConflict: "run_id" },
+      );
+    if (error) this.handleError(error);
+  }
 }

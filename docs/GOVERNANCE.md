@@ -68,6 +68,25 @@ node scripts/governance/check.mjs --only a11y --write-baseline   # refresh the a
 node --test scripts/governance/__tests__/               # tests for the gate itself
 ```
 
+A second, non-governance gate keeps the published API documentation in step with the code:
+
+```bash
+node scripts/docs-check/check.mjs                     # OpenAPI, contract, and mobile docs
+node scripts/docs-check/check.mjs --only contract     # single target
+node --test scripts/docs-check/__tests__/docs.test.mjs  # tests for the gate itself
+```
+
+| Target | Enforces |
+|---|---|
+| `openapi` | the document is valid 3.x, every operation declares responses, a tag, and a description, every tag used is declared, every `$ref` resolves, no schema referenced but undeclared, no unused schema |
+| `contract` | every `@Controller` is documented in the OpenAPI document or the contract map, and the documented "no global route prefix" claim still matches `main.ts` |
+| `mobile` | every `EXPO_PUBLIC_*` variable the app reads is documented, and the API URL default is stated |
+
+It reads the backend routes as text and never starts the server, so it runs on a fresh
+clone before `pnpm install`. Adding a controller without documenting it becomes a CI
+failure rather than a 404 someone finds in production. See
+[`../scripts/docs-check/README.md`](../scripts/docs-check/README.md).
+
 The gate has **no dependencies** and never executes repository code, so it runs on a fresh clone and in CI before
 `pnpm install`. It runs in [../.github/workflows/ci.yml](../.github/workflows/ci.yml) and must pass before merge.
 

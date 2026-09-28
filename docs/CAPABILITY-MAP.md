@@ -91,6 +91,7 @@ NestJS app, ~38 modules wired in `src/app.module.ts`. Supabase (40 migrations) a
 | Flow / module | Owning path | Status | Notes |
 |---|---|---|---|
 | Usernames & public profiles | `src/usernames` | **Live** | Includes search/trending/featured endpoints that no client consumes yet. |
+| Username on-chain claim reconciliation | `src/usernames` (`username-reconciliation.service.ts`, `username-reconciliation.controller.ts`) | **Experimental** | Batch reconciliation of `claimed` usernames against Stellar Horizon. Accounts absent on-chain (404) are flagged for admin review (`ownership_status=flagged`). Transient Horizon errors are counted as `skipped` and are safely retryable via cursor. Results persisted to `username_reconciliation_runs` table. Endpoints: `POST /admin/username/reconciliation/run`, `GET /admin/username/reconciliation/status/:username`, `POST /admin/username/reconciliation/unflag/:username`. All admin endpoints require `X-API-Key` with `admin` scope. Gated by `username.claim_reconciliation` flag (dev/test only). Migration: `20260928000002`. Self-custody preserved: service is read-only against Horizon, never signs or moves funds. |
 | Payment links (metadata, status, bulk, recurring, scam alerts) | `src/links` | **Live** | Recurring endpoints have no client consumer yet. |
 | Transactions (Horizon-backed, compose/build/simulate) | `src/transactions` | **Live** | Compose/simulate writes are **Experimental** (flag-gated, see below). `build` is a compatibility alias of `compose`. |
 | Transaction submission, confirmation & retry orchestration | `src/transactions` (`submission`/`confirmation` services) | **Experimental** | `POST /transactions/submit` accepts a signed XDR, enforces idempotency via `Idempotency-Key`, and returns stable error codes (`DUPLICATE_TRANSACTION`, `TRANSACTION_EXPIRED`, `MALFORMED_XDR`, `UNAUTHORIZED`, `DEPENDENCY_UNAVAILABLE`). Confirmation polls Horizon with bounded backoff and retries only on transient failures; mainnet submission is gated by the `mainnet.transaction_submission` flag (disabled by default). Metrics/logs emit tx hash, status, latency, and attempt count without secrets. |
@@ -153,7 +154,7 @@ Monolithic Soroban contract `QuickexContract` (`contracts/quickex/src/lib.rs`). 
 
 | Capability | Owning module | Status | Notes |
 |---|---|---|---|
-| Escrow deposit / withdraw / commitments | `src/escrow.rs`, `src/commitment.rs`, `src/escrow_id.rs` | **Live** | Testnet only; extensive test suite (unit, fuzz, bench, upgrade). |
+| Escrow deposit / withdraw / commitments | `src/escrow.rs`, `src/commitment.rs`, `src/escrow_id.rs` | **Live** | Testnet only; extensive test suite (unit, fuzz, bench, upgrade). Complete state machine with all valid transitions: Created→Pending→Spent, Created→Pending→Refunded, Created→Pending→Disputed→Spent/Refunded. |
 | Fee routing (basis points, per-asset overrides) | `src/fee` modules | **Live** | Static fees only. |
 | Pause policy, emergency mode, admin/roles | `src/admin.rs`, `src/pause_policy.rs` | **Live** | Emergency mode is irreversible by design. |
 | `create_escrow` counter endpoint | `src/lib.rs` (`create_escrow`) | **Mocked** | Only increments a counter; `_from`/`_to`/`_amount` params are reserved and ignored. |
@@ -183,6 +184,7 @@ Defaults from `app/backend/src/feature-flags/feature-flags.service.ts`:
 | `assets.listing_policy`, `assets.listing_decisions` | enabled in dev/test, **disabled in production/mainnet** | Asset listing policy enforcement and governed delisting (see [policies/ASSET-LISTING-POLICY.md](policies/ASSET-LISTING-POLICY.md)) |
 | `privacy.deletion_requests`, `privacy.retention_sweep` | enabled in dev/test, **disabled in production/mainnet** | Signed deletion requests and the retention sweep (see [policies/DATA-RETENTION-PRIVACY-POLICY.md](policies/DATA-RETENTION-PRIVACY-POLICY.md)) |
 | `bulk_invoicing_v2`, `bulk_link_generation` | enabled | Generator bulk flows |
+| `username.claim_reconciliation` | enabled in dev/test, **disabled in production/mainnet** | On-chain username claim reconciliation against Horizon; flags accounts with no active Stellar account (issue #193) |
 
 A separate env-var rollback guard exists at `app/backend/flags.js` (`FEATURE_<NAME>=true`); it is unrelated to the flags module above.
 

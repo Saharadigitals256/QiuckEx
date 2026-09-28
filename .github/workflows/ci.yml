@@ -61,28 +61,27 @@ jobs:
             --filter="${{ matrix.package }}..." \
             --cache-dir=".turbo/cache"
 
-  # ── Pre-commit rules (issue #297) ────────────────────────────────────────
-  # Runs the same local hook developers get, so a rule that only exists on one
-  # machine cannot merge. Needs full history for the formatting ratchet.
-  precommit-check:
-    name: Pre-commit Rules
+  # -- Documentation gate (issue #295) ---------------------------------------
+  # Validates that docs/openapi.json, the contract map, and the mobile env docs
+  # still describe the API the repository implements. Static only, so it needs
+  # neither the backend running nor an install.
+  docs-gate:
+    name: Documentation Gate
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      - name: Check secrets, artifacts, and formatting
-        run: node scripts/precommit/check.mjs --all
+      - name: Run documentation gate
+        run: node scripts/docs-check/check.mjs
 
-      - name: Test the pre-commit check
-        run: node --test scripts/precommit/__tests__/precommit.test.mjs
+      - name: Test the documentation gate
+        run: node --test scripts/docs-check/__tests__/docs.test.mjs
 
   # ── Governance gate (issues #306-#309) ────────────────────────────────────
   # Dependency-free: validates ADRs, asset listing policy, retention schedule and
