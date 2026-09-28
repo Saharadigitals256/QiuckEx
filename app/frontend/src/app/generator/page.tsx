@@ -28,9 +28,19 @@ import {
 } from "./bulk-invoicing";
 import '@/lib/i18n';
 import { useTranslation } from 'react-i18next';
+import {
+  MAX_MEMO_LENGTH,
+  getVerifiedAssetOptions,
+  readDraftLinks,
+  saveDraftLink,
+  validateAmountInput,
+  validatePaymentLinkPreview,
+  validateMemoInput,
+} from '@/lib/linkGenerator';
+import { notifyLinkCreated } from '@/lib/cacheInvalidation';
 
 type ValidationErrors = Partial<
-  Record<"amount" | "asset" | "destination", string>
+  Record<"amount" | "asset" | "destination" | "memo", string>
 >;
 
 type VerifiedAsset = {
@@ -132,6 +142,14 @@ export default function Generator() {
   const [sourceAssetCodes, setSourceAssetCodes] = useState<Set<string>>(
     () => new Set(["XLM", "USDC"]),
   );
+  const [draftLinks, setDraftLinks] = useState<Array<{
+    id: string;
+    amount: string;
+    asset: string;
+    destination: string;
+    memo: string;
+    createdAt: string;
+  }>>([]);
 
   const [verifiedAssets, setVerifiedAssets] = useState<VerifiedAsset[]>([]);
   const [assetsLoading, setAssetsLoading] = useState(true);
@@ -248,6 +266,32 @@ export default function Generator() {
     window.localStorage.setItem(CUSTOMER_STORAGE_KEY, JSON.stringify(customers));
   }, [customers]);
 
+  useEffect(() => {
+    try {
+      setDraftLinks(readDraftLinks(window.localStorage));
+    } catch {
+      setDraftLinks([]);
+    }
+  }, []);
+
+  const assetOptions = useMemo(
+    () => getVerifiedAssetOptions(verifiedAssets),
+    [verifiedAssets],
+  );
+
+  useEffect(() => {
+    if (!assetOptions.length) {
+      return;
+    }
+
+    const currentExists = assetOptions.some(
+      (asset) => asset.code.toUpperCase() === recipientAssetCode.toUpperCase(),
+    );
+    if (!currentExists) {
+      setRecipientAssetCode(assetOptions[0].code);
+    }
+  }, [assetOptions, recipientAssetCode]);
+
   const recipientRef = useMemo(() => {
     const a = verifiedAssets.find(
       (x) => x.code.toUpperCase() === recipientAssetCode.toUpperCase(),
@@ -343,10 +387,17 @@ export default function Generator() {
 
   const validate = () => {
     const newErrors: ValidationErrors = {};
-    if (!form.amount) {
-      newErrors.amount = t('amountRequired');
-    } else if (Number.isNaN(Number(form.amount))) {
-      newErrors.amount = t('enterValidNumber');
+    const previewValidation = validatePaymentLinkPreview({
+      amount: form.amount,
+      asset: recipientAssetCode,
+      destination: form.destination,
+      memo: form.memo,
+    });
+    if (!previewValidation.valid) {
+      if (previewValidation.errors.amount) newErrors.amount = previewValidation.errors.amount;
+      if (previewValidation.errors.asset) newErrors.asset = previewValidation.errors.asset;
+      if (previewValidation.errors.destination) newErrors.destination = previewValidation.errors.destination;
+      if (previewValidation.errors.memo) newErrors.memo = previewValidation.errors.memo;
     }
     if (!form.destination) {
       newErrors.destination = t('destinationRequired');
@@ -356,6 +407,27 @@ export default function Generator() {
     }
     return newErrors;
   };
+
+  const handleAmountChange = (value: string) => {
+    setForm((current) => ({ ...current, amount: value }));
+    const amountCheck = validateAmountInput(value);
+    setErrors((current) => ({
+      ...current,
+      amount: amountCheck.valid ? undefined : amountCheck.message,
+    }));
+  };
+
+  const handleMemoChange = (value: string) => {
+    setForm((current) => ({ ...current, memo: value.slice(0, MAX_MEMO_LENGTH) }));
+    const memoCheck = validateMemoInput(value);
+    setErrors((current) => ({
+      ...current,
+      memo: memoCheck.valid ? undefined : memoCheck.message,
+    }));
+  };
+
+  const memoCharacterCount = form.memo.length;
+  const memoRemaining = MAX_MEMO_LENGTH - memoCharacterCount;
 
   const linkData = useMemo(() => {
     if (!form.amount || !recipientAssetCode || !form.destination) {
@@ -391,6 +463,55 @@ export default function Generator() {
     advancedOpen,
     sourceAssetCodes,
   ]);
+
+  const handleSaveDraft = () => {
+    const validation = validate();
+    setErrors(validation);
+    if (Object.keys(validation).length > 0) {
+      return;
+    }
+
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const nextDraft = {
+      id: `draft-${Date.now()}`,
+      amount: form.amount,
+      asset: recipientAssetCode,
+      destination: form.destination,
+      memo: form.memo,
+      createdAt: new Date().toISOString(),
+    };
+
+    const stored = saveDraftLink(nextDraft, window.localStorage);
+    setDraftLinks(stored);
+    notifyLinkCreated({ linkId: nextDraft.id, username: form.destination });
+  };
+
+  const handleShareGeneratedLink = async () => {
+    const shareTarget = canonicalPreview ?? linkData;
+    if (!shareTarget) {
+      return;
+    }
+
+    try {
+      if (typeof navigator !== 'undefined' && navigator.share) {
+        await navigator.share({
+          title: 'QuickEx payment link',
+          text: shareTarget,
+          url: shareTarget,
+        });
+        return;
+      }
+
+      if (typeof navigator !== 'undefined' && navigator.clipboard) {
+        await navigator.clipboard.writeText(shareTarget);
+      }
+    } catch {
+      // Ignore share aborts and use the copied fallback state as necessary.
+    }
+  };
 
   const handleSubmit = () => {
     const validation = validate();
@@ -744,6 +865,7 @@ export default function Generator() {
         window.clearInterval(progressTimer);
         setBulkProgress(100);
         setBulkResult(payload);
+        notifyLinkCreated();
       } catch (generationError) {
         window.clearInterval(progressTimer);
         setBulkProgress(0);
@@ -772,9 +894,21 @@ export default function Generator() {
 
   const loadCsvFile = useCallback(
     (file: File) => {
+      if (!file.name.toLowerCase().endsWith(".csv")) {
+        setCsvFileName(file.name);
+        setCsvFileErrors(["Choose a file with a .csv extension."]);
+        setCsvRows([]);
+        return;
+      }
+
       const reader = new FileReader();
       reader.onload = () => {
         applyCsvContents(String(reader.result ?? ""), file.name);
+      };
+      reader.onerror = () => {
+        setCsvFileName(file.name);
+        setCsvFileErrors(["The CSV file could not be read."]);
+        setCsvRows([]);
       };
       reader.readAsText(file);
     },
@@ -922,9 +1056,7 @@ export default function Generator() {
                       type="number"
                       placeholder={t('amountPlaceholder')}
                       value={form.amount}
-                      onChange={(e) =>
-                        setForm({ ...form, amount: e.target.value })
-                      }
+                      onChange={(e) => handleAmountChange(e.target.value)}
                       aria-invalid={Boolean(errors.amount)}
                       aria-describedby={errors.amount ? "generator-amount-error" : undefined}
                       className={`w-full bg-transparent p-6 sm:p-8 text-3xl sm:text-5xl font-black placeholder:text-subtle ${FOCUS_RING_CLASS}`}
@@ -998,11 +1130,21 @@ export default function Generator() {
                 <input
                   id="generator-memo"
                   type="text"
+                  maxLength={MAX_MEMO_LENGTH}
                   placeholder={t('memoPlaceholder')}
                   value={form.memo}
-                  onChange={(e) => setForm({ ...form, memo: e.target.value })}
+                  onChange={(e) => handleMemoChange(e.target.value)}
                   className={`w-full bg-card/30 border border-border-strong rounded-3xl p-5 font-bold mt-2 placeholder:text-subtle ${FOCUS_RING_CLASS}`}
                 />
+                {errors.memo && (
+                  <p role="alert" className="text-red-400 text-xs mt-1">
+                    {errors.memo}
+                  </p>
+                )}
+                <div className="mt-2 flex justify-between text-[11px] uppercase tracking-[0.2em] text-muted">
+                  <span>Memo</span>
+                  <span className={memoRemaining < 0 ? 'text-red-400' : ''}>{memoCharacterCount}/{MAX_MEMO_LENGTH}</span>
+                </div>
               </div>
 
               <div className="rounded-3xl border border-border-strong bg-background/30 p-6 space-y-4">
@@ -1038,7 +1180,7 @@ export default function Generator() {
                         }
                         className={`w-full bg-card border border-border-strong rounded-2xl p-4 font-bold ${FOCUS_RING_CLASS}`}
                       >
-                        {verifiedAssets.map((a) => (
+                        {assetOptions.map((a) => (
                           <option key={a.code} value={a.code}>
                             {a.code}
                             {a.type !== "native" && a.issuer
@@ -1062,7 +1204,7 @@ export default function Generator() {
                         {t('allowedSourceAssetsDescription')}
                       </p>
                       <div className="flex flex-wrap gap-2">
-                        {verifiedAssets.map((a) => {
+                        {assetOptions.map((a) => {
                           const on = sourceAssetCodes.has(a.code);
                           return (
                             <button
@@ -1292,22 +1434,39 @@ export default function Generator() {
               </div>
             </section>
 
-            <button
-              type="button"
-              onClick={handleSubmit}
-              disabled={loading}
-              className={`w-full py-6 bg-card text-foreground text-3xl font-black rounded-3xl hover:bg-surface-strong active:scale-95 transition disabled:opacity-60 ${FOCUS_RING_CLASS}`}
-            >
-              {loading ? "Generating…" : "Generate Payment Link"}
-            </button>
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <button
+                type="button"
+                onClick={handleSaveDraft}
+                className={`flex-1 py-4 bg-surface border border-border-strong text-foreground text-lg font-black rounded-3xl hover:bg-card/10 transition ${FOCUS_RING_CLASS}`}
+              >
+                Save draft
+              </button>
+              <button
+                type="button"
+                onClick={handleSubmit}
+                disabled={loading}
+                className={`flex-[2] py-6 bg-card text-foreground text-3xl font-black rounded-3xl hover:bg-surface-strong active:scale-95 transition disabled:opacity-60 ${FOCUS_RING_CLASS}`}
+              >
+                {loading ? "Generating…" : "Generate Payment Link"}
+              </button>
+            </div>
             {error && (
               <p role="alert" className="text-red-400 text-sm text-center">{error}</p>
             )}
           </div>
 
           <div className="space-y-12">
-            <div className="w-full max-w-sm mx-auto">
+            <div className="w-full max-w-sm mx-auto space-y-4">
               <QRPreview value={linkData} />
+              <button
+                type="button"
+                onClick={() => void handleShareGeneratedLink()}
+                disabled={!canonicalPreview}
+                className={`w-full rounded-2xl border border-border-strong bg-surface px-4 py-3 text-sm font-black uppercase tracking-[0.2em] text-foreground hover:bg-card/10 disabled:cursor-not-allowed disabled:opacity-50 ${FOCUS_RING_CLASS}`}
+              >
+                Share generated link
+              </button>
             </div>
 
             <div className="space-y-4 p-8 rounded-3xl bg-card border border-border backdrop-blur-xl">
@@ -1336,6 +1495,43 @@ export default function Generator() {
               >
                 Copy canonical params
               </button>
+            </div>
+
+            <div className="space-y-3 p-6 rounded-3xl bg-card border border-border backdrop-blur-xl">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-sm font-black uppercase tracking-widest text-muted">Saved drafts</h3>
+                <span className="text-[10px] text-subtle">{draftLinks.length} saved</span>
+              </div>
+              {draftLinks.length === 0 ? (
+                <p className="text-sm text-subtle">No draft links yet.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {draftLinks.map((draft) => (
+                    <li key={draft.id} className="rounded-2xl border border-border bg-background/20 p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-bold text-foreground">{draft.amount} {draft.asset}</p>
+                          <p className="text-[11px] text-subtle">{draft.destination.slice(0, 12)}… · {new Date(draft.createdAt).toLocaleDateString()}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setForm({
+                              amount: draft.amount,
+                              destination: draft.destination,
+                              memo: draft.memo,
+                            });
+                            setRecipientAssetCode(draft.asset);
+                          }}
+                          className={`rounded-lg border border-border-strong px-2 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-muted ${FOCUS_RING_CLASS}`}
+                        >
+                          Restore
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           </div>
         </div>

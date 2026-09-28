@@ -18,6 +18,7 @@ import { useNotifications } from "../components/notifications/NotificationContex
 import OnboardingResetButton from "../components/onboarding/OnboardingResetButton";
 import { ThemeSelector } from "../components/ThemeSelector";
 import { useWallet } from "../hooks/useWallet";
+import { useSecurity } from "../hooks/use-security";
 import { clearLocalData } from "../services/local-data";
 import {
   SYNC_INTERVALS_MINUTES,
@@ -57,7 +58,14 @@ const FREQUENCY_OPTIONS: Array<{
 export default function SettingsScreen() {
   const router = useRouter();
   const { theme } = useTheme();
-  const { disconnect } = useWallet();
+  const { disconnect, wallet } = useWallet();
+  const {
+    hasPinConfigured,
+    isBiometricAvailable,
+    setBiometricLockEnabled,
+    setSessionTimeoutMinutes,
+    settings: securitySettings,
+  } = useSecurity();
   const {
     backgroundSyncSettings,
     backgroundTaskAvailable,
@@ -112,6 +120,40 @@ export default function SettingsScreen() {
           Settings
         </Text>
 
+            <View
+              style={[
+            styles.card,
+            { backgroundColor: theme.surface, borderColor: theme.border },
+          ]}
+        >
+          <Text style={[styles.cardTitle, { color: theme.textPrimary }]}>Wallet</Text>
+          <Text style={[styles.walletStatus, { color: theme.textPrimary }]}>
+            {wallet.connected ? "Connected" : "No wallet connected"}
+          </Text>
+          <Text style={[styles.helper, { color: theme.textMuted }]}>
+            {wallet.publicKey
+              ? shortenAddress(wallet.publicKey)
+              : "Connect a wallet to send and receive payments."}
+          </Text>
+          <View style={styles.actionRow}>
+            <Link href="/wallet-connect" asChild>
+              <Pressable style={[styles.actionButton, { backgroundColor: theme.buttonPrimaryBg }]}>
+                <Text style={{ color: theme.buttonPrimaryText, fontWeight: "700" }}>
+                  {wallet.connected ? "Switch Wallet" : "Connect Wallet"}
+                </Text>
+              </Pressable>
+            </Link>
+            {wallet.connected ? (
+              <Pressable
+                style={[styles.actionButton, { borderColor: theme.status.error, borderWidth: 1 }]}
+                onPress={() => void disconnect()}
+              >
+                <Text style={{ color: theme.status.error, fontWeight: "700" }}>Disconnect</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        </View>
+
         <ThemeSelector />
         <LocaleSwitcher />
 
@@ -136,6 +178,68 @@ export default function SettingsScreen() {
                 </Text>
               </View>
               <Text style={[styles.helper, { color: theme.textMuted }]}>→</Text>
+            </Pressable>
+          </Link>
+
+          <View style={styles.row}>
+            <View style={styles.rowCopy}>
+              <Text style={[styles.label, { color: theme.textPrimary }]}>Biometric Lock</Text>
+              <Text style={[styles.helper, { color: theme.textMuted }]}>
+                {isBiometricAvailable
+                  ? "Require device authentication when returning to the app."
+                  : "Biometric authentication is unavailable on this device."}
+              </Text>
+            </View>
+            <Switch
+              value={securitySettings.biometricLockEnabled}
+              disabled={!isBiometricAvailable || !hasPinConfigured}
+              onValueChange={(value) => void setBiometricLockEnabled(value)}
+            />
+          </View>
+
+          <Text style={[styles.subheading, { color: theme.textPrimary }]}>Session timeout</Text>
+          <View style={styles.timeoutOptions}>
+            {[5, 15, 30].map((minutes) => {
+              const active = securitySettings.sessionTimeoutMinutes === minutes;
+              return (
+                <Pressable
+                  key={minutes}
+                  onPress={() => void setSessionTimeoutMinutes(minutes)}
+                  style={[
+                    styles.timeoutOption,
+                    { borderColor: active ? theme.primary : theme.border },
+                    active && { backgroundColor: theme.chipActiveBg },
+                  ]}
+                >
+                  <Text style={{ color: active ? theme.chipActiveText : theme.textSecondary }}>
+                    {minutes} min
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+
+        <View
+          style={[
+            styles.card,
+            { backgroundColor: theme.surface, borderColor: theme.border },
+          ]}
+        >
+          <Text style={[styles.cardTitle, { color: theme.textPrimary }]}>Inbox</Text>
+          <Text style={[styles.helper, { color: theme.textMuted }]}>
+            Review payment, escrow, and system notifications.
+          </Text>
+          <Link href="/inbox" asChild>
+            <Pressable
+              style={[
+                styles.actionButton,
+                { borderColor: theme.buttonSecondaryBorder, borderWidth: 1 },
+              ]}
+            >
+              <Text style={{ color: theme.textPrimary, fontWeight: "700" }}>
+                Open Notification Inbox
+              </Text>
             </Pressable>
           </Link>
         </View>
@@ -490,6 +594,10 @@ export default function SettingsScreen() {
   );
 }
 
+function shortenAddress(address: string) {
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
 const styles = StyleSheet.create({
   container: { flex: 1 },
   scrollView: { flex: 1 },
@@ -507,6 +615,20 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontSize: 18,
     fontWeight: "700",
+  },
+  walletStatus: {
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  actionRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  actionButton: {
+    borderRadius: 10,
+    paddingVertical: 11,
+    paddingHorizontal: 14,
   },
   row: {
     flexDirection: "row",
@@ -526,6 +648,16 @@ const styles = StyleSheet.create({
   subheading: {
     fontSize: 15,
     fontWeight: "700",
+  },
+  timeoutOptions: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  timeoutOption: {
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
   },
   optionGroup: {
     gap: 10,

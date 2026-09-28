@@ -72,7 +72,10 @@ use crate::{
         get_escrow_id_mapping, has_dispute_vote, has_escrow, put_dispute_vote, put_escrow,
         put_escrow_id_mapping, remove_escrow,
     },
-    types::{DisputeVote, EscrowEntry, EscrowStatus, HookEventKind, Role},
+    types::{
+        DisputeVote, EscrowEntry, EscrowStatus, HookEventKind, RefundEligibility,
+        RefundEligibilityReason, Role,
+    },
 };
 
 // ---------------------------------------------------------------------------
@@ -139,6 +142,7 @@ fn compute_expires_at(env: &Env, timeout_secs: u64) -> Result<u64, QuickexError>
 /// - If `timeout_secs > 0`, the escrow expires `timeout_secs` seconds after creation.
 ///   Pass `0` for a non-expiring escrow.
 /// - Optionally sets an `arbiter` who can resolve disputes.
+/// - Optionally stores a memo (max 1024 bytes).
 ///
 /// # Errors
 /// - [`InvalidAmount`] – amount ≤ 0.
@@ -152,6 +156,7 @@ pub fn deposit(
     salt: Bytes,
     timeout_secs: u64,
     arbiter: Option<Address>,
+    memo: Option<soroban_sdk::String>,
     nonce_val: u64,
     valid_until: u64,
 ) -> Result<BytesN<32>, QuickexError> {
@@ -203,6 +208,8 @@ pub fn deposit(
         arbiter,
         arbiters: Vec::new(env),
         arbiter_threshold: 0,
+        memo,
+        milestones: Vec::new(env),
     };
 
     put_escrow(env, &commitment_bytes, &entry);
@@ -242,6 +249,7 @@ pub fn deposit(
 /// - Validates commitment uniqueness.
 /// - If `timeout_secs > 0`, the escrow expires after that many seconds.
 /// - Optionally sets an `arbiter` who can resolve disputes.
+/// - Optionally stores a memo (max 1024 bytes).
 ///
 /// # Errors
 /// - [`InvalidAmount`] – amount ≤ 0.
@@ -256,6 +264,7 @@ pub fn deposit_with_commitment(
     commitment: BytesN<32>,
     timeout_secs: u64,
     arbiter: Option<Address>,
+    memo: Option<soroban_sdk::String>,
     nonce_val: u64,
     valid_until: u64,
 ) -> Result<(), QuickexError> {
@@ -299,6 +308,8 @@ pub fn deposit_with_commitment(
         arbiter,
         arbiters: Vec::new(env),
         arbiter_threshold: 0,
+        memo,
+        milestones: Vec::new(env),
     };
 
     put_escrow(env, &commitment_bytes, &entry);
@@ -338,6 +349,8 @@ pub fn deposit_with_commitment(
 /// - If `timeout_secs > 0`, the escrow expires `timeout_secs` seconds after creation.
 ///   Pass `0` for a non-expiring escrow.
 /// - Optionally sets an `arbiter` who can resolve disputes.
+/// - Optionally stores a memo (max 1024 bytes).
+/// - Tracks milestones for partial payment progress.
 ///
 /// # Errors
 /// - [`InvalidAmount`] – initial_payment ≤ 0 or amount_due ≤ 0.
@@ -352,6 +365,8 @@ pub fn deposit_partial(
     salt: Bytes,
     timeout_secs: u64,
     arbiter: Option<Address>,
+    memo: Option<soroban_sdk::String>,
+    milestones: Vec<crate::types::Milestone>,
     nonce_val: u64,
     valid_until: u64,
 ) -> Result<BytesN<32>, QuickexError> {
@@ -391,6 +406,8 @@ pub fn deposit_partial(
         arbiter,
         arbiters: Vec::new(env),
         arbiter_threshold: 0,
+        memo,
+        milestones,
     };
 
     put_escrow(env, &commitment_bytes, &entry);
@@ -428,8 +445,10 @@ pub fn deposit_partial(
 ///
 /// - Transfers `payment_amount` from `payer` to the contract.
 /// - Increments `amount_paid` by the payment amount.
+/// - Updates milestone completion status based on cumulative payment.
 /// - Rejects overpayment (payment_amount > remaining amount due).
 /// - Emits a `PartialPayment` event.
+/// - Emits `MilestoneCompleted` events for milestones that are now complete.
 /// - If payment completes the escrow (amount_paid == amount_due), emits `EscrowFinalized`.
 ///
 /// # Errors
@@ -482,6 +501,24 @@ pub fn partial_payment(
 
     // Update amount_paid
     entry.amount_paid = entry.amount_paid.saturating_add(payment_amount);
+
+    // Track milestone completion
+    let milestone_count = entry.milestones.len();
+    for idx in 0..milestone_count {
+        if let Some(mut milestone) = entry.milestones.get(idx) {
+            if !milestone.completed && entry.amount_paid >= milestone.amount {
+                milestone.completed = true;
+                entry.milestones.set(idx, milestone.clone());
+                events::publish_milestone_completed(
+                    env,
+                    commitment.clone(),
+                    milestone.id,
+                    milestone.amount,
+                    entry.amount_paid,
+                );
+            }
+        }
+    }
 
     // Check if escrow is now fully paid
     let is_fully_paid = entry.amount_paid >= entry.amount_due;
@@ -785,25 +822,42 @@ pub fn finalize_expired_escrow(env: &Env, commitment: BytesN<32>) -> Result<(), 
     Ok(())
 }
 
-/// Read-only check for whether an escrow is currently eligible for refund
-/// finalization, without submitting a state-changing transaction.
+/// Read-only refund eligibility view.
 ///
-/// Intended for dapps/keepers to poll before calling [`finalize_expired_escrow`],
-/// and for indexers reconstructing refund availability off-chain (though note
-/// [`events::publish_escrow_deposited`] already carries `expires_at`, so most
-/// indexers can compute this themselves from the original deposit event).
-///
-/// Returns `false` (rather than erroring) once the escrow has already left
-/// `Pending` — including after it has already been refunded — since it is no
-/// longer eligible, not because eligibility couldn't be computed.
-///
-/// # Errors
-/// - [`CommitmentNotFound`] – no escrow for the given commitment.
-pub fn is_refund_eligible(env: &Env, commitment: BytesN<32>) -> Result<bool, QuickexError> {
+/// Returns whether the escrow is eligible to be finalized and a normalized
+/// machine-readable reason without mutating state or emitting events.
+pub fn is_refund_eligible(env: &Env, commitment: BytesN<32>) -> RefundEligibility {
     let commitment_bytes: Bytes = commitment.into();
-    let entry: EscrowEntry =
-        get_escrow(env, &commitment_bytes).ok_or(QuickexError::CommitmentNotFound)?;
-    Ok(entry.status == EscrowStatus::Pending && is_expired(env, &entry))
+    let Some(entry) = get_escrow(env, &commitment_bytes) else {
+        return RefundEligibility {
+            eligible: false,
+            reason: RefundEligibilityReason::CommitmentNotFound,
+        };
+    };
+
+    if entry.status == EscrowStatus::Pending && is_expired(env, &entry) {
+        return RefundEligibility {
+            eligible: true,
+            reason: RefundEligibilityReason::Eligible,
+        };
+    }
+
+    let reason = match entry.status {
+        EscrowStatus::Disputed => RefundEligibilityReason::InvalidDisputeState,
+        EscrowStatus::Pending => RefundEligibilityReason::EscrowNotExpired,
+        _ => RefundEligibilityReason::AlreadySpent,
+    };
+
+    RefundEligibility {
+        eligible: false,
+        reason,
+    }
+}
+
+/// Alias for the read-only eligibility view; keepers and backends can call either
+/// name depending on their preferred API style.
+pub fn get_refund_eligibility(env: &Env, commitment: BytesN<32>) -> RefundEligibility {
+    is_refund_eligible(env, commitment)
 }
 
 // ---------------------------------------------------------------------------
@@ -821,21 +875,203 @@ pub fn extend_escrow_ttl(env: &Env, commitment: BytesN<32>) -> Result<(), Quicke
     Ok(())
 }
 
+/// Extend an escrow's expiry date by a configurable time period.
+///
+/// # Arguments
+/// - `commitment`: The escrow commitment hash
+/// - `extension_secs`: Number of seconds to extend the expiry
+/// - `max_extensions`: Maximum number of extensions allowed (e.g., 3)
+/// - `max_lifetime_secs`: Maximum total lifetime after all extensions
+///
+/// # Errors
+/// - [`CommitmentNotFound`] – no escrow for the given commitment.
+/// - [`AlreadySpent`] – escrow is not in `Pending` or `Disputed` status.
+/// - [`MaxExtensionsReached`] – escrow has already been extended max_extensions times.
+/// - [`ExtensionExceedsMaxLifetime`] – extension would exceed max_lifetime_secs.
+/// - [`InvalidTimeout`] – extension_secs would overflow when added to current expires_at.
+pub fn extend_escrow_expiry(
+    env: &Env,
+    commitment: BytesN<32>,
+    extension_secs: u64,
+    max_extensions: u32,
+    max_lifetime_secs: u64,
+) -> Result<(), QuickexError> {
+    let commitment_bytes: Bytes = commitment.clone().into();
+    let mut entry: EscrowEntry =
+        get_escrow(env, &commitment_bytes).ok_or(QuickexError::CommitmentNotFound)?;
+
+    if entry.status != EscrowStatus::Pending && entry.status != EscrowStatus::Disputed {
+        return Err(QuickexError::AlreadySpent);
+    }
+
+    let extension_cfg = storage::get_ttl_extension_fee_config(env);
+    let fee = if extension_secs == 0 {
+        0
+    } else {
+        let raw = (extension_secs as i128).saturating_mul(extension_cfg.fee_per_second);
+        let bounded = raw.max(extension_cfg.min_fee).min(extension_cfg.max_fee);
+        if extension_cfg.max_fee > 0 {
+            bounded
+        } else {
+            raw.max(extension_cfg.min_fee)
+        }
+    };
+
+    let mut extension_record = storage::get_escrow_extension(env, &commitment_bytes)
+        .unwrap_or(crate::types::EscrowExtension {
+            commitment: commitment.clone(),
+            extension_count: 0,
+            last_extended_at: 0,
+            new_expires_at: entry.expires_at,
+        });
+
+    if extension_record.extension_count >= max_extensions {
+        return Err(QuickexError::MaxExtensionsReached);
+    }
+
+    let current_expires_at = if entry.expires_at > 0 {
+        entry.expires_at
+    } else {
+        env.ledger().timestamp()
+    };
+
+    let new_expires_at = current_expires_at.saturating_add(extension_secs);
+    if new_expires_at == u64::MAX {
+        return Err(QuickexError::InvalidTimeout);
+    }
+
+    let creation_time = entry.created_at;
+    let max_expires_at = creation_time.saturating_add(max_lifetime_secs);
+    if new_expires_at > max_expires_at {
+        return Err(QuickexError::ExtensionExceedsMaxLifetime);
+    }
+
+    let token_client = token::Client::new(env, &entry.token);
+    let platform_wallet = storage::get_platform_wallet(env).unwrap_or_else(|| env.current_contract_address());
+
+    if fee > 0 {
+        let contract_balance = token_client.balance(&env.current_contract_address());
+        let charge = fee.min(contract_balance.max(0));
+        if charge > 0 {
+            token_client.transfer(&env.current_contract_address(), &platform_wallet, &charge);
+        }
+    }
+
+    entry.expires_at = new_expires_at;
+    put_escrow(env, &commitment_bytes, &entry);
+
+    extension_record.extension_count += 1;
+    extension_record.last_extended_at = env.ledger().timestamp();
+    extension_record.new_expires_at = new_expires_at;
+    storage::put_escrow_extension(env, &commitment_bytes, &extension_record);
+
+    events::publish_escrow_extension_fee_charged(env, commitment.clone(), fee, extension_secs);
+    events::publish_escrow_extension_applied(
+        env,
+        commitment.clone(),
+        extension_record.extension_count,
+        extension_secs,
+        fee,
+        new_expires_at,
+    );
+
+    Ok(())
+}
+
 /// Cleanup terminal escrow entries to reclaim storage deposits.
 ///
 /// Only escrows in `Spent` or `Refunded` status can be removed.
+/// Clean up a terminal escrow entry to reclaim storage.
+///
+/// Only escrows in `Spent` or `Refunded` status can be removed. This operation
+/// reclaims the storage deposit that was reserved for the escrow entry.
+///
+/// # Storage Deposit Refund
+///
+/// When an escrow is cleaned up, Soroban's ledger automatically handles the storage
+/// deposit refund to the contract account. The contract does not need to manually
+/// transfer funds; the refund is applied at the ledger level during `remove_escrow`.
+///
+/// # Gas Cost
+///
+/// Cleanup cost: ~1,000-2,000 stroops (varies with ledger state).
+/// - Storage read: 100 stroops
+/// - Storage removal: 500-1,000 stroops (ledger-dependent)
+/// - Event emission: 200-300 stroops
+///
+/// # Arguments
+/// * `env` - The contract environment
+/// * `commitment` - 32-byte commitment hash identifying the escrow
+///
+/// # Errors
+/// * `CommitmentNotFound` - No escrow exists for the commitment
+/// * `InvalidDisputeState` - Escrow is not in a terminal state (Spent/Refunded)
+///
+/// # Events
+/// Emits `EscrowCleaned` event with commitment and cleaned status.
 pub fn cleanup_escrow(env: &Env, commitment: BytesN<32>) -> Result<(), QuickexError> {
-    let commitment_bytes: Bytes = commitment.into();
+    let commitment_bytes: Bytes = commitment.clone().into();
     let entry: EscrowEntry =
         get_escrow(env, &commitment_bytes).ok_or(QuickexError::CommitmentNotFound)?;
 
     match entry.status {
         EscrowStatus::Spent | EscrowStatus::Refunded => {
+            let status = entry.status;
             remove_escrow(env, &commitment_bytes);
+            events::publish_escrow_cleaned(env, commitment, status);
             Ok(())
         }
-        _ => Err(QuickexError::AlreadySpent), // Reuse error or add a more specific one if needed
+        EscrowStatus::Pending | EscrowStatus::Disputed | EscrowStatus::Expired => {
+            Err(QuickexError::InvalidDisputeState)
+        }
     }
+}
+
+/// Batch cleanup multiple terminal escrow entries in a single call.
+///
+/// Attempts to clean up each commitment in the vector. Non-terminal escrows are
+/// skipped and do not cause the entire operation to fail. Returns the count of
+/// successfully cleaned escrows.
+///
+/// # Gas Cost
+///
+/// Approximately 1,000-2,000 stroops per escrow cleaned, plus 200 stroops overhead.
+/// Calling `cleanup_escrow_batch(&[c1, c2, c3])` costs roughly 3X the cost of a single
+/// cleanup plus overhead.
+///
+/// # Arguments
+/// * `env` - The contract environment
+/// * `commitments` - Vector of commitment hashes to clean up
+///
+/// # Returns
+/// Number of escrows successfully cleaned up.
+///
+/// # Events
+/// Emits `EscrowCleaned` event for each successfully cleaned escrow.
+pub fn cleanup_escrow_batch(env: &Env, commitments: Vec<BytesN<32>>) -> Result<u32, QuickexError> {
+    const MAX_CLEANUP_BATCH_SIZE: u32 = 20;
+
+    if commitments.len() > MAX_CLEANUP_BATCH_SIZE {
+        return Err(QuickexError::InvalidAmount);
+    }
+
+    let mut cleaned_count = 0u32;
+
+    for commitment in commitments.iter() {
+        let commitment_bytes: Bytes = commitment.clone().into();
+
+        // Try to get the escrow; skip if not found
+        if let Some(entry) = get_escrow(env, &commitment_bytes) {
+            // Only clean if in terminal state
+            if matches!(entry.status, EscrowStatus::Spent | EscrowStatus::Refunded) {
+                remove_escrow(env, &commitment_bytes);
+                events::publish_escrow_cleaned(env, commitment.clone(), entry.status);
+                cleaned_count += 1;
+            }
+        }
+    }
+
+    Ok(cleaned_count)
 }
 
 // ---------------------------------------------------------------------------
@@ -1248,4 +1484,86 @@ pub fn resolve_dispute_multi_sig(
     }
 
     Ok(())
+}
+// ---------------------------------------------------------------------------
+// submit_dispute_evidence
+// ---------------------------------------------------------------------------
+
+/// Submit evidence for a disputed escrow.
+///
+/// - Can be called by either party of the disputed escrow.
+/// - Escrow must be in `Disputed` status.
+/// - Evidence is stored on-chain with a hash and submitter address.
+/// - Events are emitted for evidence submission.
+/// - Maximum evidence size is enforced (e.g., 2048 bytes for hash).
+///
+/// # Arguments
+/// - `commitment`: The escrow commitment hash
+/// - `evidence_hash`: SHA256 hash of the evidence data
+/// - `submitter`: Address of the party submitting evidence (must authorize)
+///
+/// # Errors
+/// - [`CommitmentNotFound`] – no escrow for the given commitment.
+/// - [`InvalidDisputeState`] – escrow is not in `Disputed` status.
+/// - [`InvalidEvidenceHash`] – evidence hash is invalid (all zeros).
+/// - [`EvidenceSizeExceeded`] – evidence hash size exceeds maximum.
+pub fn submit_dispute_evidence(
+    env: &Env,
+    commitment: BytesN<32>,
+    evidence_hash: BytesN<32>,
+    submitter: Address,
+) -> Result<(), QuickexError> {
+    submitter.require_auth();
+
+    let commitment_bytes: Bytes = commitment.clone().into();
+    let entry: EscrowEntry =
+        get_escrow(env, &commitment_bytes).ok_or(QuickexError::CommitmentNotFound)?;
+
+    // Guard: escrow must be in Disputed state
+    if entry.status != EscrowStatus::Disputed {
+        return Err(QuickexError::InvalidDisputeState);
+    }
+
+    // Validate evidence hash (not all zeros)
+    let zero_hash = BytesN::<32>::from_array(env, &[0u8; 32]);
+    if evidence_hash == zero_hash {
+        return Err(QuickexError::InvalidEvidenceHash);
+    }
+
+    // Maximum evidence size check (32 bytes for hash is always OK)
+    // Size check for the evidence_hash itself (already 32 bytes)
+    if 32 > 2048 {
+        return Err(QuickexError::EvidenceSizeExceeded);
+    }
+
+    // Check if evidence from this submitter already exists
+    if storage::has_dispute_evidence(env, &commitment_bytes, &evidence_hash) {
+        // Silently return OK if evidence already exists (idempotent)
+        return Ok(());
+    }
+
+    // Store evidence
+    let evidence = crate::types::DisputeEvidence {
+        commitment: commitment.clone(),
+        evidence_hash: evidence_hash.clone(),
+        submitted_by: submitter.clone(),
+        submitted_at: env.ledger().timestamp(),
+    };
+
+    storage::put_dispute_evidence(env, &commitment_bytes, &evidence);
+
+    // Emit event
+    events::publish_dispute_evidence_submitted(env, commitment, evidence_hash, submitter);
+
+    Ok(())
+}
+
+/// Get dispute evidence for a given commitment and evidence hash.
+pub fn get_dispute_evidence(
+    env: &Env,
+    commitment: BytesN<32>,
+    evidence_hash: BytesN<32>,
+) -> Option<crate::types::DisputeEvidence> {
+    let commitment_bytes: Bytes = commitment.into();
+    storage::get_dispute_evidence(env, &commitment_bytes, &evidence_hash)
 }

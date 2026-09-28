@@ -65,28 +65,18 @@ pub enum QuickexError {
     ArbiterAlreadyVoted = 320,
     /// Insufficient arbiter votes to reach the threshold for resolution.
     InsufficientVotes = 321,
+    /// This signer has already approved the current admin action round.
+    AdminActionAlreadyApproved = 327,
     /// Hook contract is not allowed.
     HookNotAllowed = 322,
-    /// The configured upgrade window is invalid.
-    InvalidUpgradeWindow = 323,
-    /// Another upgrade is already pending or executing.
-    UpgradeAlreadyInProgress = 324,
-    /// No upgrade is pending completion.
-    UpgradeNotInProgress = 325,
-    /// The governance proposal timelock has not elapsed.
-    TimelockNotElapsed = 326,
-    /// No governance proposal exists for the supplied id.
-    ProposalNotFound = 327,
-    /// This signer has already approved the proposal.
-    ProposalAlreadyApproved = 328,
-    /// The proposal has already been executed.
-    ProposalAlreadyExecuted = 329,
-    /// The proposal has been canceled.
-    ProposalCanceled = 330,
-    /// The proposal has not reached its approval threshold.
-    InsufficientApprovals = 331,
-    /// The proposal action is invalid for the current governance state.
-    InvalidProposal = 332,
+    /// Maximum number of escrow extensions reached.
+    MaxExtensionsReached = 323,
+    /// Escrow extension would exceed maximum lifetime.
+    ExtensionExceedsMaxLifetime = 324,
+    /// Evidence hash is invalid or missing.
+    InvalidEvidenceHash = 325,
+    /// Evidence size exceeds maximum allowed.
+    EvidenceSizeExceeded = 326,
     // Stealth address errors (400-499)
     /// Derived stealth address does not match the provided one.
     StealthAddressMismatch = 400,

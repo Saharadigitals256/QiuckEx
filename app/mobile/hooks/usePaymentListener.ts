@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { PaymentNotification } from "../components/notifications/types/notification";
 import { useNotifications } from "../components/notifications/NotificationContext";
+import { API_URL } from "../src/config/build";
 
 export function usePaymentListener(address?: string) {
   const { addNotification, soundEnabled } = useNotifications();
@@ -27,7 +28,7 @@ export function usePaymentListener(address?: string) {
       try {
         const since = sinceRef.current;
         const url = `/payments/recent?address=${encodeURIComponent(addr)}${since ? `&since=${since}` : ""}&limit=50`;
-        const base = (global as any)?.API_BASE_URL ?? "";
+        const base = (global as any)?.API_BASE_URL ?? API_URL;
         const resp = await fetch(base + url);
         if (!resp.ok) return;
         const body = await resp.json();

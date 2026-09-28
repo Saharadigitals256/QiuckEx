@@ -1,15 +1,18 @@
 import { Injectable } from "@nestjs/common";
+import { Horizon, Keypair } from "@stellar/stellar-sdk";
 import {
   SupabaseService,
   SearchProfileResult,
   TrendingCreatorResult,
   FeaturedProfileResult,
   MarketplaceListing,
+  EditableProfileRecord,
 } from "../supabase/supabase.service";
 import { decodeCursor } from "../common/pagination/cursor.util";
 import { SupabaseUniqueConstraintError } from "../supabase/supabase.errors";
 import { AppConfigService } from "../config";
 import { DiscoveryCacheService } from "./cache/discovery-cache.service";
+import { UsernameRankingService } from "./username-ranking.service";
 import {
   USERNAME_MIN_LENGTH,
   USERNAME_MAX_LENGTH,
@@ -20,7 +23,12 @@ import {
   UsernameLimitExceededError,
   UsernameValidationError,
   UsernameErrorCode,
+  UsernameClaimInvalidError,
 } from "./errors";
+import { ProfileSettingsDto } from "../dto/username/profile-settings.dto";
+
+const CLAIM_TOLERANCE_MS = 5 * 60 * 1000;
+const CLAIM_PREFIX = "QuickEx username claim";
 
 export interface UsernameRow {
   id: string;
@@ -35,6 +43,7 @@ export class UsernamesService {
     private readonly supabase: SupabaseService,
     private readonly config: AppConfigService,
     private readonly cache: DiscoveryCacheService,
+    private readonly rankingService: UsernameRankingService,
   ) {}
 
   /**
@@ -92,6 +101,51 @@ export class UsernamesService {
     return { ok: true };
   }
 
+  async verifyAndCreateClaim(
+    username: string,
+    signature: string,
+    publicKey: string,
+  ): Promise<{ ok: true }> {
+    const normalized = this.normalizeUsername(username);
+    this.validateFormat(username);
+
+    const separator = signature.indexOf(".");
+    if (separator <= 0 || separator === signature.length - 1) {
+      throw new UsernameClaimInvalidError();
+    }
+
+    const timestamp = signature.slice(0, separator);
+    const encodedSignature = signature.slice(separator + 1);
+    const timestampMs = Number(timestamp);
+    if (!Number.isSafeInteger(timestampMs) || Math.abs(Date.now() - timestampMs) > CLAIM_TOLERANCE_MS) {
+      throw new UsernameClaimInvalidError("Username claim signature has expired");
+    }
+
+    let verified = false;
+    try {
+      const keypair = Keypair.fromPublicKey(publicKey);
+      verified = keypair.verify(
+        Buffer.from(`${CLAIM_PREFIX}\n${normalized}\n${timestamp}`, "utf8"),
+        Buffer.from(encodedSignature, "base64"),
+      );
+    } catch {
+      throw new UsernameClaimInvalidError();
+    }
+    if (!verified) throw new UsernameClaimInvalidError();
+
+    try {
+      const horizonUrl = this.config.horizonUrl ??
+        (this.config.network === "mainnet"
+          ? "https://horizon.stellar.org"
+          : "https://horizon-testnet.stellar.org");
+      await new Horizon.Server(horizonUrl).loadAccount(publicKey);
+    } catch {
+      throw new UsernameClaimInvalidError("Claiming account was not found on the Stellar network");
+    }
+
+    return this.create(normalized, publicKey);
+  }
+
   /**
    * Count usernames registered for a wallet (for limit enforcement).
    */
@@ -106,6 +160,31 @@ export class UsernamesService {
     return this.supabase.listUsernamesByPublicKey(publicKey) as Promise<
       UsernameRow[]
     >;
+  }
+
+  async getProfileSettings(publicKey: string): Promise<EditableProfileRecord[]> {
+    return this.supabase.getProfileSettings(publicKey);
+  }
+
+  async updateProfileSettings(
+    dto: ProfileSettingsDto,
+  ): Promise<
+    | { status: "updated"; profile: EditableProfileRecord }
+    | { status: "conflict" | "not_found" }
+  > {
+    return this.supabase.updateProfileSettings(
+      dto.publicKey,
+      this.normalizeUsername(dto.username),
+      dto.profileVersion,
+      {
+        profile_primary_color: dto.primaryColor,
+        avatar_url: dto.avatarUrl?.trim() || null,
+        bio: dto.bio,
+        twitter_handle: dto.twitterHandle,
+        discord_handle: dto.discordHandle,
+        github_handle: dto.githubHandle,
+      },
+    );
   }
 
   async searchDiscovery(
@@ -154,17 +233,12 @@ export class UsernamesService {
       createdAt: listing.created_at,
     }));
 
-    const combined = [...profileResults, ...listingResults].sort((a, b) => {
-      const scoreA = a.kind === 'profile' ? (a.similarityScore ?? 0) : 0;
-      const scoreB = b.kind === 'profile' ? (b.similarityScore ?? 0) : 0;
-      if (scoreA !== scoreB) {
-        return scoreB - scoreA;
-      }
-
-      const timeA = new Date(a.createdAt).getTime();
-      const timeB = new Date(b.createdAt).getTime();
-      return timeB - timeA;
-    });
+    // Apply configurable ranking weights (loaded from feature_flags, cached 60 s).
+    const weights = await this.rankingService.getWeights();
+    const combined = this.rankingService.rank(
+      [...profileResults, ...listingResults],
+      weights,
+    );
 
     const hasMore = combined.length > effectiveLimit;
     const data = hasMore ? combined.slice(0, effectiveLimit) : combined;

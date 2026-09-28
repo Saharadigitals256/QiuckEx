@@ -10,7 +10,7 @@ import {
 } from "../services/notifications";
 import type { Notification } from "../types/notification";
 
-const API_BASE = "http://localhost:3000";
+const API_BASE = "http://localhost:4000";
 
 describe("in-app notifications API client", () => {
   const fetchMock = jest.fn();

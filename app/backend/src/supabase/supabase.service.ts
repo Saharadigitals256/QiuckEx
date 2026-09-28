@@ -3,6 +3,10 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
 import { AppConfigService } from "../config";
 import {
+  CORRELATION_ID_HEADER,
+  getCurrentCorrelationId,
+} from "../common/context/correlation.context";
+import {
   EscrowDbStatus,
   EscrowRecord,
   PaymentDbStatus,
@@ -22,6 +26,18 @@ export interface SearchProfileResult {
   last_active_at: string | null;
   is_public: boolean;
   similarity_score?: number;
+}
+
+export interface EditableProfileRecord {
+  username: string;
+  public_key: string;
+  profile_primary_color: string;
+  avatar_url: string | null;
+  bio: string;
+  twitter_handle: string;
+  discord_handle: string;
+  github_handle: string;
+  profile_version: number;
 }
 
 export interface TrendingCreatorResult extends SearchProfileResult {
@@ -93,9 +109,33 @@ export class SupabaseService {
       auth: {
         persistSession: false,
       },
+      global: {
+        fetch: this.correlatingFetch.bind(this),
+      },
     });
 
     this.logger.log("Supabase client initialized successfully");
+  }
+
+  /**
+   * Wrap the global fetch used by the Supabase client so every outbound request
+   * to Supabase carries the current request correlation ID header. Falls back
+   * to the native fetch when the correlation ID is unavailable.
+   */
+  private correlatingFetch(
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ): Promise<Response> {
+    const correlationId = getCurrentCorrelationId();
+    if (!correlationId) return fetch(input, init);
+
+    const headers = new Headers(init?.headers);
+    headers.set(CORRELATION_ID_HEADER, correlationId);
+
+    return fetch(input, {
+      ...init,
+      headers,
+    });
   }
 
   /**
@@ -159,6 +199,46 @@ export class SupabaseService {
     return data ?? [];
   }
 
+  async getProfileSettings(publicKey: string): Promise<EditableProfileRecord[]> {
+    const { data, error } = await this.client
+      .from("usernames")
+      .select("username, public_key, profile_primary_color, avatar_url, bio, twitter_handle, discord_handle, github_handle, profile_version")
+      .eq("public_key", publicKey)
+      .order("created_at", { ascending: true });
+    if (error) this.handleError(error);
+    return (data ?? []) as EditableProfileRecord[];
+  }
+
+  async updateProfileSettings(
+    publicKey: string,
+    username: string,
+    expectedVersion: number,
+    profile: Omit<EditableProfileRecord, "username" | "public_key" | "profile_version">,
+  ): Promise<{ status: "updated"; profile: EditableProfileRecord } | { status: "conflict" | "not_found" }> {
+    const { data, error } = await this.client
+      .from("usernames")
+      .update({ ...profile, profile_version: expectedVersion + 1 })
+      .eq("username", username)
+      .eq("public_key", publicKey)
+      .eq("profile_version", expectedVersion)
+      .select("username, public_key, profile_primary_color, avatar_url, bio, twitter_handle, discord_handle, github_handle, profile_version")
+      .maybeSingle();
+
+    if (error) this.handleError(error);
+    if (data) {
+      return { status: "updated", profile: data as EditableProfileRecord };
+    }
+
+    const { data: current, error: lookupError } = await this.client
+      .from("usernames")
+      .select("username")
+      .eq("username", username)
+      .eq("public_key", publicKey)
+      .maybeSingle();
+    if (lookupError) this.handleError(lookupError);
+    return current ? { status: "conflict" } : { status: "not_found" };
+  }
+
   async getUsername(username: string): Promise<SearchProfileResult | null> {
     const { data, error } = await this.client
       .from("usernames")
@@ -175,6 +255,15 @@ export class SupabaseService {
   // Reconciliation helpers
   // ---------------------------------------------------------------------------
 
+  async fetchAllEscrows(): Promise<EscrowRecord[]> {
+    const { data, error } = await this.client
+      .from("escrow_records")
+      .select("*")
+      .order("updated_at", { ascending: true });
+    if (error) this.handleError(error);
+    return (data as EscrowRecord[]) ?? [];
+  }
+
   async fetchPendingEscrows(
     statuses: EscrowDbStatus[],
     limit: number,
@@ -187,6 +276,15 @@ export class SupabaseService {
       .limit(limit);
     if (error) this.handleError(error);
     return (data as EscrowRecord[]) ?? [];
+  }
+
+  async fetchAllPayments(): Promise<PaymentRecord[]> {
+    const { data, error } = await this.client
+      .from("payment_records")
+      .select("*")
+      .order("updated_at", { ascending: true });
+    if (error) this.handleError(error);
+    return (data as PaymentRecord[]) ?? [];
   }
 
   async fetchPendingPayments(
@@ -667,6 +765,30 @@ export class SupabaseService {
     return data as MarketplaceListing;
   }
 
+  async countActiveListingsBySeller(sellerPublicKey: string): Promise<number> {
+    const { count, error } = await this.client
+      .from("username_marketplace")
+      .select("id", { count: "exact", head: true })
+      .eq("seller_public_key", sellerPublicKey)
+      .eq("status", "active");
+    if (error) this.handleError(error);
+    return count ?? 0;
+  }
+
+  async countPendingBidsByBidder(
+    listingId: string,
+    bidderPublicKey: string,
+  ): Promise<number> {
+    const { count, error } = await this.client
+      .from("username_bids")
+      .select("id", { count: "exact", head: true })
+      .eq("listing_id", listingId)
+      .eq("bidder_public_key", bidderPublicKey)
+      .eq("status", "pending");
+    if (error) this.handleError(error);
+    return count ?? 0;
+  }
+
   async searchActiveListings(
     query: string,
     limit: number = 10,
@@ -842,6 +964,8 @@ export class SupabaseService {
     listingId: string,
     bidderPublicKey: string,
     bidAmount: number,
+    signature: string,
+    signedAt: number,
   ): Promise<MarketplaceBid> {
     const { data, error } = await this.client
       .from("username_bids")
@@ -849,6 +973,8 @@ export class SupabaseService {
         listing_id: listingId,
         bidder_public_key: bidderPublicKey,
         bid_amount: bidAmount,
+        signature,
+        signed_at: new Date(signedAt).toISOString(),
       })
       .select()
       .single();
@@ -986,5 +1112,103 @@ export class SupabaseService {
     const { data, error } = await query.select().maybeSingle();
     if (error) this.handleError(error);
     return data as VerifiedAssetDbRecord | null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Username on-chain claim reconciliation (issue #193)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Paginated list of `claimed` usernames for on-chain reconciliation.
+   * `cursor` is the ISO `created_at` timestamp of the last processed row.
+   */
+  async fetchClaimedUsernames(
+    limit: number,
+    cursor?: string,
+  ): Promise<Array<{ id: string; username: string; public_key: string; created_at: string; last_active_at: string | null }>> {
+    let query = this.client
+      .from("usernames")
+      .select("id, username, public_key, created_at, last_active_at")
+      .eq("ownership_status", "claimed")
+      .order("created_at", { ascending: true })
+      .limit(limit);
+    if (cursor) {
+      query = query.gt("created_at", cursor);
+    }
+    const { data, error } = await query;
+    if (error) this.handleError(error);
+    return (data ?? []) as Array<{ id: string; username: string; public_key: string; created_at: string; last_active_at: string | null }>;
+  }
+
+  /**
+   * Flag a username for on-chain reconciliation review (account not found on Horizon).
+   * Sets `ownership_status = 'flagged'` and records the flag timestamp.
+   */
+  async flagUsernameForReview(username: string, reason: string): Promise<void> {
+    const { error } = await this.client
+      .from("usernames")
+      .update({ ownership_status: "flagged", squatting_flagged_at: new Date().toISOString() })
+      .eq("username", username);
+    if (error) this.handleError(error);
+    this.logger.log(`Username '${username}' flagged for review: ${reason}`);
+  }
+
+  /**
+   * Restore a flagged username back to `claimed` status after admin review.
+   */
+  async unflagUsername(username: string): Promise<void> {
+    const { error } = await this.client
+      .from("usernames")
+      .update({ ownership_status: "claimed", squatting_flagged_at: null })
+      .eq("username", username);
+    if (error) this.handleError(error);
+  }
+
+  /**
+   * Return the lightweight ownership/activity state for a single username.
+   */
+  async getOwnershipStatus(
+    username: string,
+  ): Promise<{ ownership_status: string; last_active_at: string | null; public_key: string } | null> {
+    const { data, error } = await this.client
+      .from("usernames")
+      .select("ownership_status, last_active_at, public_key")
+      .eq("username", username)
+      .maybeSingle();
+    if (error) this.handleError(error);
+    return data as { ownership_status: string; last_active_at: string | null; public_key: string } | null;
+  }
+
+  /**
+   * Persist a username reconciliation run report for audit / diagnostics.
+   * Idempotent on `run_id`.
+   */
+  async persistUsernameReconciliationRun(report: {
+    runId: string;
+    startedAt: string;
+    completedAt: string;
+    durationMs: number;
+    processed: number;
+    confirmed: number;
+    flagged: number;
+    skipped: number;
+  }): Promise<void> {
+    const { error } = await this.client
+      .from("username_reconciliation_runs")
+      .upsert(
+        {
+          run_id: report.runId,
+          started_at: report.startedAt,
+          completed_at: report.completedAt,
+          duration_ms: report.durationMs,
+          processed: report.processed,
+          confirmed: report.confirmed,
+          flagged: report.flagged,
+          skipped: report.skipped,
+          report,
+        },
+        { onConflict: "run_id" },
+      );
+    if (error) this.handleError(error);
   }
 }

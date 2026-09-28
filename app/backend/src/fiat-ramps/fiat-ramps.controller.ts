@@ -10,22 +10,62 @@ export class FiatRampsController {
   @Get('anchors')
   @ApiOperation({ summary: 'Fetch available anchors based on user location/asset' })
   @ApiResponse({ status: 200, description: 'List of available anchors' })
-  async getAvailableAnchors(@Query('assetCode') assetCode: string, @Query('country') country: string) {
-    return this.fiatRampsService.getAvailableAnchors(assetCode, country);
+  async getAvailableAnchors(
+    @Query('assetCode') assetCode?: string,
+    @Query('country') country?: string,
+    @Query('anchorDomain') anchorDomain?: string,
+  ) {
+    return this.fiatRampsService.getAvailableAnchors(assetCode, country, anchorDomain);
+  }
+
+  @Get('sep10/challenge')
+  @ApiOperation({ summary: 'Fetch a SEP-10 challenge for the client to sign' })
+  async getSep10Challenge(
+    @Query('anchorDomain') anchorDomain: string,
+    @Query('userAccount') userAccount: string,
+  ) {
+    return this.fiatRampsService.getSep10Challenge(anchorDomain, userAccount);
   }
 
   @Post('deposit')
   @ApiOperation({ summary: 'Initiate SEP-24 hosted deposit flow' })
   @ApiResponse({ status: 201, description: 'Deposit flow initiated' })
-  async initiateDeposit(@Body() depositDto: { assetCode: string; amount: number; userAccount: string; anchorDomain: string }) {
+  async initiateDeposit(@Body() depositDto: {
+    assetCode: string;
+    amount: number | string;
+    userAccount: string;
+    anchorDomain: string;
+    signedChallenge: string;
+    countryCode?: string;
+    lang?: string;
+  }) {
     return this.fiatRampsService.initiateDeposit(depositDto);
   }
 
   @Post('withdraw')
   @ApiOperation({ summary: 'Initiate SEP-24 hosted withdrawal flow' })
   @ApiResponse({ status: 201, description: 'Withdrawal flow initiated' })
-  async initiateWithdrawal(@Body() withdrawalDto: { assetCode: string; amount: number; userAccount: string; anchorDomain: string }) {
+  async initiateWithdrawal(@Body() withdrawalDto: {
+    assetCode: string;
+    amount: number | string;
+    userAccount: string;
+    anchorDomain: string;
+    signedChallenge: string;
+    countryCode?: string;
+    lang?: string;
+  }) {
     return this.fiatRampsService.initiateWithdrawal(withdrawalDto);
+  }
+
+  @Post('kyc/status')
+  @ApiOperation({ summary: 'Fetch normalized customer KYC status from the SEP-12 server' })
+  async getKycStatus(@Body() params: {
+    anchorDomain: string;
+    userAccount: string;
+    signedChallenge: string;
+    customerId?: string;
+  }) {
+    return this.fiatRampsService.getKycStatus(params);
   }
 
   @Post('kyc/callback')

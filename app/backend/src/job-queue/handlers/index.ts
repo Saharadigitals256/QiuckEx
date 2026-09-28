@@ -10,3 +10,5 @@ export { ExportGenerationHandler } from './export-generation.handler';
 export { ReconciliationHandler } from './reconciliation.handler';
 export { StellarReconnectHandler } from './stellar-reconnect.handler';
 export { SeedResetHandler, PermanentSeedResetError } from './seed-reset.handler';
+export { TemplateExecutionHandler } from './template-execution.handler';
+export { DerivedRecordRepairHandler } from './derived-record-repair.handler';

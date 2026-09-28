@@ -84,6 +84,9 @@ importers:
         specifier: 0.5.1
         version: 0.5.1(@babel/core@7.28.6)(react-native@0.81.5(@babel/core@7.28.6)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)
     devDependencies:
+      '@expo/config-plugins':
+        specifier: ~54.0.4
+        version: 54.0.4
       '@types/jest':
         specifier: ^29.5.14
         version: 29.5.14

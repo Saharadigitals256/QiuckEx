@@ -30,6 +30,7 @@ import {
   registerNotificationReadHandlers,
   syncMarkAllNotificationsRead,
 } from "../../services/notification-read-sync";
+import { syncPushNotificationToken } from "../../services/push-notifications";
 import { getUnreadCount, markAllAsRead as markInboxAllAsRead } from "../../services/notifications";
 import type { TransactionItem } from "../../types/transaction";
 
@@ -92,6 +93,13 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
       setInboxUnreadCount(sessionData.unreadCount);
     }
   }, [sessionData?.unreadCount]);
+
+  useEffect(() => {
+    const publicKey = sessionData?.accountContext?.publicKey;
+    if (!publicKey) return;
+
+    void syncPushNotificationToken(publicKey).catch(() => {});
+  }, [sessionData?.accountContext?.publicKey]);
 
   useEffect(() => {
     registerNotificationReadHandlers();

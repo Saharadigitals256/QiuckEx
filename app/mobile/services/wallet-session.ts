@@ -47,6 +47,10 @@ function isValidNetwork(value: unknown): value is WalletNetwork {
   return value === "testnet" || value === "mainnet";
 }
 
+export function isValidStellarPublicKey(value: unknown): value is string {
+  return typeof value === "string" && /^G[A-Z2-7]{55}$/.test(value);
+}
+
 // ── Session CRUD ─────────────────────────────────────────────────────────────
 
 export async function getWalletSession(): Promise<WalletSession | null> {
@@ -58,6 +62,7 @@ export async function getWalletSession(): Promise<WalletSession | null> {
 
     if (
       !parsed.publicKey ||
+      !isValidStellarPublicKey(parsed.publicKey) ||
       !isValidNetwork(parsed.network) ||
       !isValidWalletType(parsed.walletType) ||
       !parsed.connectedAt
@@ -115,6 +120,54 @@ export async function resetInvalidSession(
 
   await clearWalletSession();
   return { reason: result.reason, session };
+}
+
+export interface SessionRestoreResult {
+  restored: boolean;
+  reason: SessionInvalidReason;
+  session: WalletSession | null;
+}
+
+/**
+ * Restores the stored wallet session, verifying public key format, max-age,
+ * and environment matching. Updates lastConfirmedAt on success.
+ */
+export async function restoreWalletSession(
+  currentEnvironmentId?: string,
+): Promise<SessionRestoreResult> {
+  const session = await getWalletSession();
+  if (!session) {
+    return { restored: false, reason: "none", session: null };
+  }
+
+  if (!isValidStellarPublicKey(session.publicKey)) {
+    await clearWalletSession();
+    return { restored: false, reason: "corrupted", session: null };
+  }
+
+  const check = getSessionInvalidReason(session, currentEnvironmentId);
+  if (check.invalid) {
+    await clearWalletSession();
+    return { restored: false, reason: check.reason, session };
+  }
+
+  const now = new Date().toISOString();
+  session.lastConfirmedAt = now;
+  await saveWalletSession(session);
+  return { restored: true, reason: "none", session };
+}
+
+/**
+ * Recovers or rolls back to a previous session snapshot if a subsequent operation fails.
+ */
+export async function rollbackSession(
+  backupSession: WalletSession | null,
+): Promise<void> {
+  if (backupSession) {
+    await saveWalletSession(backupSession);
+  } else {
+    await clearWalletSession();
+  }
 }
 
 // ── Session Validation ───────────────────────────────────────────────────────

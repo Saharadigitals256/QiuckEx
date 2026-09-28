@@ -2,7 +2,7 @@ use crate::{
     errors::QuickexError,
     events::{EVENT_SCHEMA_VERSION, EVENT_TOPIC_ADMIN},
     fee::{fee_from_bps_ceil, fee_from_bps_floor, MAX_FEE_BPS},
-    types::{FeeConfig, OracleFeeConfig, PerAssetFeeConfig},
+    types::{FeeConfig, OracleFeeConfig, PerAssetFeeConfig, TtlExtensionFeeConfig},
     QuickexContract, QuickexContractClient,
 };
 use soroban_sdk::{
@@ -162,6 +162,56 @@ fn test_withdrawal_with_fee() {
 }
 
 #[test]
+fn test_ttl_extension_fee_is_proportional_and_disbursed() {
+    let env = Env::default();
+    let (client, admin, platform_wallet, owner, _) = setup_test(&env);
+
+    let token_admin = Address::generate(&env);
+    let token_id = env
+        .register_stellar_asset_contract_v2(token_admin.clone())
+        .address();
+    let token_client = token::Client::new(&env, &token_id);
+    let token_admin_client = token::StellarAssetClient::new(&env, &token_id);
+
+    env.mock_all_auths();
+    token_admin_client.mint(&owner, &10_000);
+
+    client.set_ttl_extension_fee_config(
+        &admin,
+        &TtlExtensionFeeConfig {
+            fee_per_second: 5,
+            min_fee: 0,
+            max_fee: 10_000,
+        },
+    );
+    client.set_platform_wallet(&admin, &platform_wallet);
+
+    let amount = 2_000i128;
+    let salt = Bytes::from_array(&env, &[7; 32]);
+    let commitment = client.deposit(
+        &token_id,
+        &amount,
+        &owner,
+        &salt,
+        &3600,
+        &None,
+        &0u64,
+        &u64::MAX,
+    );
+
+    let fee = 300i128; // 60s * 5 = 300
+    client.extend_escrow_expiry(&commitment, &60u64, &3u32, &86_400u64);
+
+    assert_eq!(token_client.balance(&platform_wallet), fee);
+    assert_eq!(token_client.balance(&client.address), 1_700);
+
+    let cfg = client.get_ttl_extension_fee_config();
+    assert_eq!(cfg.fee_per_second, 5);
+    assert_eq!(cfg.min_fee, 0);
+    assert_eq!(cfg.max_fee, 10_000);
+}
+
+#[test]
 fn test_zero_fee() {
     let env = Env::default();
     let (client, admin, platform_wallet, owner, _) = setup_test(&env);
@@ -236,6 +286,38 @@ fn test_set_fee_config_accepts_max_bps() {
         },
     );
     assert_eq!(client.get_fee_config().fee_bps, MAX_FEE_BPS);
+}
+
+#[test]
+fn test_fee_ceiling_and_asset_override_boundaries_are_enforced() {
+    let env = Env::default();
+    let (client, admin, _, _, _) = setup_test(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(Address::generate(&env))
+        .address();
+    env.mock_all_auths();
+
+    client.set_per_asset_fee(
+        &admin,
+        &token,
+        &PerAssetFeeConfig {
+            fee_bps: MAX_FEE_BPS,
+            arbiter_bps: MAX_FEE_BPS,
+        },
+    );
+    let stored = client.get_per_asset_fee(&token).unwrap();
+    assert_eq!(stored.fee_bps, MAX_FEE_BPS);
+    assert_eq!(stored.arbiter_bps, MAX_FEE_BPS);
+
+    let result = client.try_set_per_asset_fee(
+        &admin,
+        &token,
+        &PerAssetFeeConfig {
+            fee_bps: MAX_FEE_BPS + 1,
+            arbiter_bps: 0,
+        },
+    );
+    assert_contract_error(result, QuickexError::InvalidAmount);
 }
 
 #[test]

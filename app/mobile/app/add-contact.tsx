@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, ScrollView } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { saveContact } from "../services/contacts";
+import { isValidContactAddress, saveContact } from "../services/contacts";
 import { TagSelector, ContactTag } from "../components/TagSelector";
 import { useTheme } from "../src/theme/ThemeContext";
 
@@ -28,8 +28,8 @@ export default function AddContactScreen() {
       return;
     }
     
-    if (!address.startsWith("0x") && address.length !== 42) {
-      Alert.alert("Error", "Please enter a valid wallet address");
+    if (!isValidContactAddress(address)) {
+      Alert.alert("Error", "Please enter a valid Stellar wallet address");
       return;
     }
     
@@ -39,7 +39,7 @@ export default function AddContactScreen() {
         address: address.trim(),
         nickname: nickname.trim() || `Contact_${Date.now()}`,
         tags: selectedTags,
-      } as any);
+      });
       router.replace("/contacts");
     } catch (e) {
       Alert.alert("Error", "Failed to save contact");

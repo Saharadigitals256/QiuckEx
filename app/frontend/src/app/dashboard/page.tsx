@@ -18,6 +18,13 @@ import {
   fetchActivityFeed,
   type ActivityFeedItem,
 } from "@/hooks/activityFeedApi";
+import {
+  filterActivityItems,
+  hasActiveFilters,
+  type ActivityFilterState,
+} from "@/lib/activityFilters";
+import { PaymentHistoryFilters } from "@/components/PaymentHistoryFilters";
+import { cacheInvalidator } from "@/lib/cacheInvalidation";
 
 type DashboardResponse = {
   items: ActivityFeedItem[];
@@ -61,12 +68,21 @@ function DashboardContent() {
   const { data, error, loading, callApi } = useApi<DashboardResponse>();
   const [userBids, setUserBids] = useState<UserBid[]>([]);
   const [userListings, setUserListings] = useState<UserListing[]>([]);
+  const [bidsLoading, setBidsLoading] = useState(true);
+  const [listingsLoading, setListingsLoading] = useState(true);
+  const [bidsError, setBidsError] = useState<string | null>(null);
+  const [listingsError, setListingsError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [feedRetryCount, setFeedRetryCount] = useState(0);
 
   const [metricsData, setMetricsData] = useState<AnalyticsData | null>(null);
   const [metricsLoading, setMetricsLoading] = useState(true);
   const [metricsError, setMetricsError] = useState<string | null>(null);
+  const [activityFilters, setActivityFilters] = useState<ActivityFilterState>({
+    query: "",
+    status: "All",
+    asset: "All",
+  });
 
   const loadMetrics = useCallback(async () => {
     setMetricsLoading(true);
@@ -90,7 +106,19 @@ function DashboardContent() {
     void callApi(() => fetchActivityFeed(20));
     void fetchUserBids().then(setUserBids);
     void fetchUserListings().then(setUserListings);
-  }, [callApi, feedRetryCount]);
+
+    const unsubscribe = cacheInvalidator.subscribe((event) => {
+      if (
+        event.type === "payment_completed" ||
+        event.type === "link_created" ||
+        event.type === "activity_feed_cleared"
+      ) {
+        void callApi(() => fetchActivityFeed(20));
+        void loadMetrics();
+      }
+    });
+    return () => unsubscribe();
+  }, [callApi, feedRetryCount, loadMetrics]);
 
   useEffect(() => {
     if (!statusMessage) {
@@ -171,6 +199,25 @@ function DashboardContent() {
 
     return null;
   }, [highlightedBid, highlightedListing, highlightedTransaction]);
+
+  const assetOptions = useMemo(
+    () => [
+      "All",
+      ...Array.from(new Set((data?.items ?? []).map((item) => item.asset))).sort(),
+    ],
+    [data?.items],
+  );
+
+  const filteredActivityItems = useMemo(
+    () => filterActivityItems(data?.items ?? [], activityFilters),
+    [activityFilters, data?.items],
+  );
+
+  const hasActivityFilters = hasActiveFilters(activityFilters);
+
+  const clearActivityFilters = () => {
+    setActivityFilters({ query: "", status: "All", asset: "All" });
+  };
 
   const handleRetry = () => {
     setFeedRetryCount((prev) => prev + 1);
@@ -426,8 +473,8 @@ function DashboardContent() {
           {data?.degraded ? (
             <div className="mx-6 mt-6 rounded-2xl border border-amber-300/30 bg-amber-400/5 p-4 sm:mx-10 sm:mt-10">
               <p className="text-sm font-medium text-amber-600 dark:text-amber-400">
-                The activity feed is temporarily unavailable. Showing cached or
-                partial data.{" "}
+                {data.error ?? "The activity feed is temporarily unavailable."}{" "}
+                {data.items.length > 0 ? "Showing partial data. " : ""}
                 <button
                   type="button"
                   onClick={handleRetry}
@@ -472,106 +519,168 @@ function DashboardContent() {
                 Create payment link
               </Link>
             </div>
+          ) : data.degraded && data.items.length === 0 ? (
+            <div className="px-6 py-12 text-center sm:px-10">
+              <h3 className="text-lg font-semibold text-foreground">
+                Activity could not be loaded
+              </h3>
+              <p className="mt-2 text-sm text-muted">
+                Your payment history is not available right now. Retry to check the network again.
+              </p>
+              <button
+                type="button"
+                onClick={handleRetry}
+                className={`mt-5 rounded-xl bg-indigo-500 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-400 ${FOCUS_RING_CLASS}`}
+              >
+                Retry activity feed
+              </button>
+            </div>
           ) : (
             <>
-              <div className="overflow-x-auto">
-                <table className="min-w-[700px] w-full text-left">
-                  <caption className="sr-only">
-                    Recent payment activity from the Stellar network.
-                  </caption>
-                  <thead>
-                    <tr className="border-b border-border text-[10px] font-semibold uppercase tracking-[0.24em] text-muted">
-                      <th className="px-6 py-4 sm:px-10 sm:py-6">Transaction</th>
-                      <th className="px-6 py-4 sm:px-10 sm:py-6">Amount</th>
-                      <th className="px-6 py-4 sm:px-10 sm:py-6">Memo / Status</th>
-                      <th className="px-6 py-4 sm:px-10 sm:py-6">From / To</th>
-                      <th className="px-6 py-4 sm:px-10 sm:py-6">Date</th>
-                    </tr>
-                  </thead>
+              <div className="border-b border-border bg-surface/60 p-6 sm:p-8">
+                <PaymentHistoryFilters
+                  allItems={data?.items ?? []}
+                  filteredItems={filteredActivityItems}
+                  filters={activityFilters}
+                  onFiltersChange={setActivityFilters}
+                  assetOptions={assetOptions}
+                />
+              </div>
 
-                  <tbody className="divide-y divide-border">
-                    {(data?.items ?? []).map((item, index) => {
-                      const isHighlighted =
-                        item.id === highlightedTransaction;
-
-                      return (
-                        <tr
-                          key={item.id}
-                          id={toAnchorId("transaction", item.id)}
-                          tabIndex={-1}
-                          className={`transition ${
-                            isHighlighted
-                              ? "bg-indigo-500/10"
-                              : "hover:bg-surface"
-                          }`}
-                        >
-                          <td className="px-6 py-6 sm:px-10">
-                            <div className="flex items-center gap-3">
-                              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-surface font-mono text-[10px] opacity-70">
-                                #{index + 1}
-                              </span>
-                              <span className="font-mono text-sm text-foreground sm:text-base">
-                                {shortAddress(item.id)}
-                              </span>
-                            </div>
-                          </td>
-                          <td className="px-6 py-6 text-lg font-semibold sm:px-10">
-                            {item.amount} {item.asset}
-                          </td>
-                          <td className="px-6 py-6 sm:px-10">
-                            <div className="flex flex-col gap-1.5">
-                              {item.memo ? (
-                                <span className="font-semibold text-foreground">
-                                  {item.memo}
-                                </span>
-                              ) : (
-                                <span className="text-xs italic text-subtle">
-                                  No memo
-                                </span>
-                              )}
-                              <span
-                                className={`inline-flex w-fit items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.24em] ${getStatusClasses(
-                                  item.status,
-                                )}`}
-                              >
-                                {item.status}
-                              </span>
-                            </div>
-                          </td>
-                          <td className="px-6 py-6 sm:px-10">
-                            <div className="flex flex-col gap-1">
-                              <span className="text-xs text-muted">
-                                From:{" "}
-                                <span className="font-mono text-subtle">
-                                  {shortAddress(item.source)}
-                                </span>
-                              </span>
-                              <span className="text-xs text-muted">
-                                To:{" "}
-                                <span className="font-mono text-subtle">
-                                  {shortAddress(item.destination)}
-                                </span>
-                              </span>
-                            </div>
-                          </td>
-                          <td className="px-6 py-6 text-muted sm:px-10">
-                            {item.date}
-                          </td>
+              {filteredActivityItems.length === 0 ? (
+                <div className="flex flex-col items-center justify-center px-6 py-16 text-center sm:px-10">
+                  <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-surface">
+                    <svg
+                      className="h-8 w-8 text-muted"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth={1.5}
+                      aria-hidden="true"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M21 21 16.65 16.65M11 7a4 4 0 1 1 0 8a4 4 0 0 1 0-8Z"
+                      />
+                    </svg>
+                  </div>
+                  <h3 className="text-lg font-semibold text-foreground">
+                    No transactions match these filters
+                  </h3>
+                  <p className="mt-2 max-w-md text-sm text-muted">
+                    Try a different keyword, status, or asset to find the payment you need.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={clearActivityFilters}
+                    className={`mt-6 rounded-xl bg-indigo-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg transition hover:bg-indigo-400 ${FOCUS_RING_CLASS}`}
+                  >
+                    Clear filters
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div className="overflow-x-auto">
+                    <table className="min-w-[700px] w-full text-left">
+                      <caption className="sr-only">
+                        Recent payment activity from the Stellar network.
+                      </caption>
+                      <thead>
+                        <tr className="border-b border-border text-[10px] font-semibold uppercase tracking-[0.24em] text-muted">
+                          <th className="px-6 py-4 sm:px-10 sm:py-6">Transaction</th>
+                          <th className="px-6 py-4 sm:px-10 sm:py-6">Amount</th>
+                          <th className="px-6 py-4 sm:px-10 sm:py-6">Memo / Status</th>
+                          <th className="px-6 py-4 sm:px-10 sm:py-6">From / To</th>
+                          <th className="px-6 py-4 sm:px-10 sm:py-6">Date</th>
                         </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+                      </thead>
 
-              <div className="bg-surface p-6 text-center sm:p-8">
-                <Link
-                  href="/notifications?category=payments"
-                  className={`text-sm font-semibold text-muted transition hover:text-foreground ${FOCUS_RING_CLASS}`}
-                >
-                  View payment alerts
-                </Link>
-              </div>
+                      <tbody className="divide-y divide-border">
+                        {filteredActivityItems.map((item, index) => {
+                          const isHighlighted =
+                            item.id === highlightedTransaction;
+
+                          return (
+                            <tr
+                              key={item.id}
+                              id={toAnchorId("transaction", item.id)}
+                              tabIndex={-1}
+                              className={`transition ${
+                                isHighlighted
+                                  ? "bg-indigo-500/10"
+                                  : "hover:bg-surface"
+                              }`}
+                            >
+                              <td className="px-6 py-6 sm:px-10">
+                                <div className="flex items-center gap-3">
+                                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-surface font-mono text-[10px] opacity-70">
+                                    #{index + 1}
+                                  </span>
+                                  <span className="font-mono text-sm text-foreground sm:text-base">
+                                    {shortAddress(item.id)}
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="px-6 py-6 text-lg font-semibold sm:px-10">
+                                {item.amount} {item.asset}
+                              </td>
+                              <td className="px-6 py-6 sm:px-10">
+                                <div className="flex flex-col gap-1.5">
+                                  {item.memo ? (
+                                    <span className="font-semibold text-foreground">
+                                      {item.memo}
+                                    </span>
+                                  ) : (
+                                    <span className="text-xs italic text-subtle">
+                                      No memo
+                                    </span>
+                                  )}
+                                  <span
+                                    className={`inline-flex w-fit items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.24em] ${getStatusClasses(
+                                      item.status,
+                                    )}`}
+                                  >
+                                    {item.status}
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="px-6 py-6 sm:px-10">
+                                <div className="flex flex-col gap-1">
+                                  <span className="text-xs text-muted">
+                                    From:{" "}
+                                    <span className="font-mono text-subtle">
+                                      {shortAddress(item.source)}
+                                    </span>
+                                  </span>
+                                  <span className="text-xs text-muted">
+                                    To:{" "}
+                                    <span className="font-mono text-subtle">
+                                      {shortAddress(item.destination)}
+                                    </span>
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="px-6 py-6 text-muted sm:px-10">
+                                {item.date}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="bg-surface p-6 text-center sm:p-8">
+                    <Link
+                      href="/notifications?category=payments"
+                      className={`text-sm font-semibold text-muted transition hover:text-foreground ${FOCUS_RING_CLASS}`}
+                    >
+                      View payment alerts
+                    </Link>
+                  </div>
+                </>
+              )}
             </>
           )}
         </section>
@@ -600,7 +709,16 @@ function DashboardContent() {
               <h3 className="mb-5 text-sm font-semibold uppercase tracking-[0.24em] text-muted">
                 My Active Bids
               </h3>
-              {userBids.length === 0 ? (
+              {bidsLoading ? (
+                <p role="status" className="text-sm text-muted">Loading your bids...</p>
+              ) : bidsError ? (
+                <div className="space-y-2" role="alert">
+                  <p className="text-sm text-danger">Your bids could not be loaded: {bidsError}</p>
+                  <button type="button" onClick={handleRetry} className="text-sm font-semibold text-brand underline">
+                    Retry dashboard data
+                  </button>
+                </div>
+              ) : userBids.length === 0 ? (
                 <p className="text-sm text-muted">No active bids yet.</p>
               ) : (
                 <div className="space-y-3">
@@ -620,7 +738,7 @@ function DashboardContent() {
                           @{bid.username}
                         </p>
                         <p className="text-[11px] text-muted">
-                          My bid: {bid.myBid} USDC. Ends{" "}
+                          My bid: {bid.myBid} USDC. Current: {bid.currentBid} USDC. Ends{" "}
                           {formatCountdown(bid.endsAt)}
                         </p>
                       </div>
@@ -643,7 +761,16 @@ function DashboardContent() {
               <h3 className="mb-5 text-sm font-semibold uppercase tracking-[0.24em] text-muted">
                 My Listings
               </h3>
-              {userListings.length === 0 ? (
+              {listingsLoading ? (
+                <p role="status" className="text-sm text-muted">Loading your listings...</p>
+              ) : listingsError ? (
+                <div className="space-y-2" role="alert">
+                  <p className="text-sm text-danger">Your listings could not be loaded: {listingsError}</p>
+                  <button type="button" onClick={handleRetry} className="text-sm font-semibold text-brand underline">
+                    Retry dashboard data
+                  </button>
+                </div>
+              ) : userListings.length === 0 ? (
                 <p className="text-sm text-muted">
                   No usernames listed yet.
                 </p>

@@ -8,7 +8,10 @@ import {
   mapListingDetailToCardListing,
   MarketplaceListing,
   MarketplaceListingDetail,
+  acceptBid,
 } from "@/hooks/marketplaceApi";
+import { resolvePublicKey } from "@/lib/publicKey";
+import { useFocusTrap } from "@/hooks/useFocusTrap";
 
 type ListingDetailModalProps = {
   listingId: string | null;
@@ -45,6 +48,9 @@ export function ListingDetailModal({
   onPlaceBid,
 }: ListingDetailModalProps) {
   const [loadState, setLoadState] = useState<DetailLoadState>({ kind: "idle" });
+  const [actionState, setActionState] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const modalRef = useFocusTrap<HTMLDivElement>(Boolean(listingId), onClose);
 
   useEffect(() => {
     if (!listingId) {
@@ -81,6 +87,21 @@ export function ListingDetailModal({
     };
   }, [listingId, viewerPublicKey]);
 
+  async function handleAcceptBid(bidId: string) {
+    if (!listingId) return;
+    setActionState(bidId);
+    setActionError(null);
+    const result = await acceptBid(listingId, bidId, resolvePublicKey());
+    if (!result.success) {
+      setActionError(result.reason);
+      setActionState(null);
+      return;
+    }
+    const detail = await fetchListingDetail(listingId, resolvePublicKey());
+    setLoadState({ kind: "ready", detail });
+    setActionState(null);
+  }
+
   if (!listingId || loadState.kind === "idle") {
     return null;
   }
@@ -94,7 +115,7 @@ export function ListingDetailModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-background/75 backdrop-blur-md" onClick={onClose} />
 
-      <div className="relative z-10 w-full max-w-4xl overflow-hidden rounded-[32px] border border-border-strong bg-background/90 shadow-2xl">
+      <div ref={modalRef} role="dialog" aria-modal="true" aria-labelledby="listing-detail-title" className="relative z-10 w-full max-w-4xl overflow-hidden rounded-[32px] border border-border-strong bg-background/90 shadow-2xl">
         {loadState.kind === "loading" && (
           <div className="p-10 text-center">
             <p className="text-sm font-semibold text-subtle">Loading listing detail…</p>
@@ -141,7 +162,7 @@ export function ListingDetailModal({
                   <p className="text-xs font-black uppercase tracking-[0.3em] text-brand">
                     Listing Detail
                   </p>
-                  <h2 className="mt-3 text-4xl font-black text-foreground">
+                  <h2 id="listing-detail-title" className="mt-3 text-4xl font-black text-foreground">
                     @{loadState.detail.listing.username}
                   </h2>
                   <p className="mt-3 max-w-xl text-sm leading-6 text-subtle">
@@ -259,11 +280,26 @@ export function ListingDetailModal({
                         <span className="text-xs font-bold uppercase tracking-wide text-subtle">
                           {formatBidStatus(bid.status)}
                         </span>
+                        {loadState.detail.state_hints.can_accept_bids && bid.status === "pending" && (
+                          <button
+                            type="button"
+                            onClick={() => void handleAcceptBid(bid.id)}
+                            disabled={actionState !== null}
+                            className="ml-3 rounded-xl bg-indigo-500 px-3 py-2 text-xs font-bold text-white transition hover:bg-indigo-400 disabled:opacity-50"
+                          >
+                            {actionState === bid.id ? "Accepting..." : "Accept"}
+                          </button>
+                        )}
                       </li>
                     ))}
                   </ul>
                 )}
               </div>
+              {actionError && (
+                <p role="alert" className="mt-4 rounded-2xl border border-red-400/20 bg-red-500/10 p-3 text-xs font-semibold text-danger">
+                  {actionError}
+                </p>
+              )}
             </section>
 
             <aside className="p-8">

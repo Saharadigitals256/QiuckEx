@@ -35,6 +35,7 @@ export default function OnboardingFlow({ onComplete, onSkip }: OnboardingFlowPro
 
   const [currentStep, setCurrentStep] = useState(0);
   const [isDemoMode, setIsDemoMode] = useState(false);
+  const [selectedTourFeature, setSelectedTourFeature] = useState('wallet');
   const [fadeAnim] = useState(new Animated.Value(1));
 
   const steps: OnboardingStep[] = [
@@ -138,6 +139,83 @@ export default function OnboardingFlow({ onComplete, onSkip }: OnboardingFlowPro
         </View>
       ),
       action: 'Got It',
+    },
+    {
+      id: 'tour',
+      title: 'Explore QuickEx',
+      subtitle: 'Tap a feature to see how it works',
+      content: (
+        <View style={styles.tourContent}>
+          <View style={styles.tourOptions}>
+            {[
+              {
+                id: 'wallet',
+                icon: 'wallet-outline' as const,
+                title: 'Connect a wallet',
+                description: 'Bring your own keys and stay in control.',
+              },
+              {
+                id: 'pay',
+                icon: 'qr-code-outline' as const,
+                title: 'Pay instantly',
+                description: 'Scan a link and sign in seconds.',
+              },
+              {
+                id: 'activity',
+                icon: 'pulse-outline' as const,
+                title: 'Follow activity',
+                description: 'Keep an eye on payments and notifications.',
+              },
+            ].map((feature) => {
+              const selected = selectedTourFeature === feature.id;
+              return (
+                <TouchableOpacity
+                  key={feature.id}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  style={[
+                    styles.tourOption,
+                    {
+                      backgroundColor: selected ? theme.chipActiveBg : theme.surface,
+                      borderColor: selected ? theme.chipActiveBg : theme.border,
+                    },
+                  ]}
+                  onPress={() => setSelectedTourFeature(feature.id)}
+                >
+                  <Ionicons
+                    name={feature.icon}
+                    size={28}
+                    color={selected ? theme.chipActiveText : theme.textPrimary}
+                  />
+                  <View style={styles.tourOptionCopy}>
+                    <Text style={[styles.tourOptionTitle, { color: selected ? theme.chipActiveText : theme.textPrimary }]}>
+                      {feature.title}
+                    </Text>
+                    <Text style={[styles.tourOptionDescription, { color: selected ? theme.chipActiveText : theme.textSecondary }]}>
+                      {feature.description}
+                    </Text>
+                  </View>
+                  <Ionicons
+                    name={selected ? 'checkmark-circle' : 'chevron-forward'}
+                    size={22}
+                    color={selected ? theme.chipActiveText : theme.textMuted}
+                  />
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          <Text style={[styles.tourDetail, { color: theme.textSecondary }]}>
+            {
+              {
+                wallet: 'Connect a compatible wallet from the home screen to get started.',
+                pay: 'Use Scan to Pay to review a request before you approve it.',
+                activity: 'Your recent activity and unread alerts stay easy to find on Home.',
+              }[selectedTourFeature]
+            }
+          </Text>
+        </View>
+      ),
+      action: 'Continue',
     },
     {
       id: 'demo-choice',
@@ -403,6 +481,39 @@ const styles = StyleSheet.create({
   },
   educationContent: {
     alignItems: 'center',
+  },
+  tourContent: {
+    width: '100%',
+  },
+  tourOptions: {
+    gap: 12,
+  },
+  tourOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 76,
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  tourOptionCopy: {
+    flex: 1,
+    marginHorizontal: 12,
+  },
+  tourOptionTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  tourOptionDescription: {
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  tourDetail: {
+    fontSize: 15,
+    lineHeight: 22,
+    textAlign: 'center',
+    marginTop: 24,
   },
   visualContainer: {
     flexDirection: 'row',

@@ -84,10 +84,6 @@ export default function ContactsScreen() {
   }
 
   function confirmDelete(contact: Contact) {
-    if (isConnected === false) {
-      Alert.alert("Offline Mode", "Modifying contacts is unavailable while offline.");
-      return;
-    }
     Alert.alert(
       "Delete Contact",
       `Are you sure you want to delete ${contact.nickname || contact.address}?`,
@@ -97,8 +93,12 @@ export default function ContactsScreen() {
           text: "Delete",
           style: "destructive",
           onPress: async () => {
-            await deleteContact(contact.id);
-            loadContacts();
+            try {
+              await deleteContact(contact.id);
+              await loadContacts();
+            } catch {
+              Alert.alert("Error", "Failed to delete contact");
+            }
           },
         },
       ]
@@ -161,15 +161,10 @@ export default function ContactsScreen() {
       
       <View style={styles.addButtonContainer}>
         <TouchableOpacity 
-          style={[styles.addButton, { backgroundColor: theme.primary }, isConnected === false && { opacity: 0.5 }]}
+          style={[styles.addButton, { backgroundColor: theme.primary }]}
           onPress={() => {
-            if (isConnected === false) {
-              Alert.alert("Offline Mode", "Adding contacts is unavailable while offline.");
-              return;
-            }
             router.push("/add-contact");
           }}
-          disabled={isConnected === false}
         >
           <Text style={[styles.addButtonText, { color: theme.primaryForeground }]}>+ Add New Contact</Text>
         </TouchableOpacity>

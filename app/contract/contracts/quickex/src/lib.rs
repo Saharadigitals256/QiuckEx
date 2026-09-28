@@ -1,6 +1,6 @@
 #![no_std]
 #![allow(clippy::too_many_arguments)]
-use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, String, Symbol, Vec};
 
 mod admin;
 #[cfg(test)]
@@ -62,9 +62,8 @@ use errors::QuickexError;
 use pause_policy::{EntryPoint, PauseChangeReason};
 use storage::*;
 use types::{
-    DeploymentMetadata, EscrowEntry, EscrowStatus, FeeConfig, GovernanceAction, GovernanceConfig,
-    GovernanceProposal, OracleFeeConfig, PerAssetFeeConfig, PrivacyAwareEscrowView, Role,
-    StealthDepositParams,
+    DeploymentMetadata, EscrowEntry, EscrowStatus, FeeConfig, OracleFeeConfig, PerAssetFeeConfig,
+    PrivacyAwareEscrowView, Role, StealthDepositParams, TtlExtensionFeeConfig,
 };
 
 /// QuickEx Privacy Contract
@@ -212,6 +211,7 @@ impl QuickexContract {
     /// * `salt` - Random salt (0–1024 bytes) for uniqueness
     /// * `timeout_secs` - Seconds from now until the escrow expires (0 = no expiry)
     /// * `arbiter` - Optional arbiter address who can resolve disputes
+    /// * `memo` - Optional memo text (max 1024 bytes), visible to owner and recipient
     ///
     /// # Errors
     /// * `InvalidAmount` - Amount is zero or negative
@@ -226,6 +226,7 @@ impl QuickexContract {
         salt: Bytes,
         timeout_secs: u64,
         arbiter: Option<Address>,
+        memo: Option<String>,
         nonce: u64,
         valid_until: u64,
     ) -> Result<BytesN<32>, QuickexError> {
@@ -261,6 +262,7 @@ impl QuickexContract {
             salt,
             timeout_secs,
             arbiter,
+            memo,
             nonce,
             valid_until,
         )
@@ -374,6 +376,7 @@ impl QuickexContract {
     /// * `commitment` - 32-byte commitment hash (must be unique)
     /// * `timeout_secs` - Seconds from now until the escrow expires (0 = no expiry)
     /// * `arbiter` - Optional arbiter address who can resolve disputes
+    /// * `memo` - Optional memo text (max 1024 bytes), visible to owner and recipient
     ///
     /// # Errors
     /// * `InvalidAmount` - Amount is zero or negative
@@ -387,6 +390,7 @@ impl QuickexContract {
         commitment: BytesN<32>,
         timeout_secs: u64,
         arbiter: Option<Address>,
+        memo: Option<String>,
         nonce: u64,
         valid_until: u64,
     ) -> Result<(), QuickexError> {
@@ -422,25 +426,14 @@ impl QuickexContract {
             commitment,
             timeout_secs,
             arbiter,
+            memo,
             nonce,
             valid_until,
         )
     }
     /// Activate emergency mode (irreversible). Only admin can call. Emits event.
     pub fn activate_emergency_mode(env: Env, caller: Address) -> Result<(), QuickexError> {
-        if storage::governance_is_initialized(&env) {
-            let config = storage::get_governance_config(&env)
-                .ok_or(QuickexError::InvalidGovernanceConfig)?;
-            if !config.signers.contains(&caller) {
-                return Err(QuickexError::NotGovernanceSigner);
-            }
-        } else {
-            let admin = get_admin(&env).ok_or(QuickexError::Unauthorized)?;
-            if caller != admin {
-                return Err(QuickexError::Unauthorized);
-            }
-        }
-        caller.require_auth();
+        admin::require_admin(&env, &caller)?;
         if storage::is_emergency_mode(&env) {
             return Ok(()); // Already set
         }
@@ -464,6 +457,8 @@ impl QuickexContract {
     /// * `salt` - Random salt (0–1024 bytes) for uniqueness
     /// * `timeout_secs` - Seconds from now until the escrow expires (0 = no expiry)
     /// * `arbiter` - Optional arbiter address who can resolve disputes
+    /// * `memo` - Optional memo text (max 1024 bytes)
+    /// * `milestones` - Array of milestones for tracking partial payment progress
     ///
     /// # Errors
     /// * `InvalidAmount` - initial_payment ≤ 0 or amount_due ≤ 0
@@ -479,6 +474,8 @@ impl QuickexContract {
         salt: Bytes,
         timeout_secs: u64,
         arbiter: Option<Address>,
+        memo: Option<String>,
+        milestones: Vec<types::Milestone>,
         nonce: u64,
         valid_until: u64,
     ) -> Result<BytesN<32>, QuickexError> {
@@ -515,6 +512,8 @@ impl QuickexContract {
             salt,
             timeout_secs,
             arbiter,
+            memo,
+            milestones,
             nonce,
             valid_until,
         )
@@ -608,6 +607,28 @@ impl QuickexContract {
         admin::require_initialized(&env)?;
         pause_policy::require_entry_allowed(&env, EntryPoint::CleanupEscrow)?;
         escrow::cleanup_escrow(&env, commitment)
+    }
+
+    /// Batch cleanup multiple terminal escrow entries in a single call.
+    ///
+    /// Attempts to clean up each commitment in the vector. Non-terminal escrows are
+    /// skipped and do not cause the entire operation to fail. Returns the count of
+    /// successfully cleaned escrows.
+    ///
+    /// # Gas Cost
+    ///
+    /// Approximately 1,000-2,000 stroops per escrow cleaned, plus 200 stroops overhead.
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `commitments` - Vector of commitment hashes to clean up
+    ///
+    /// # Returns
+    /// Number of escrows successfully cleaned up.
+    pub fn cleanup_escrow_batch(env: Env, commitments: Vec<BytesN<32>>) -> Result<u32, QuickexError> {
+        admin::require_initialized(&env)?;
+        pause_policy::require_entry_allowed(&env, EntryPoint::CleanupEscrow)?;
+        escrow::cleanup_escrow_batch(&env, commitments)
     }
 
     /// Automatically finalize an expired escrow by refunding to the owner.
@@ -773,6 +794,73 @@ impl QuickexContract {
         escrow::resolve_dispute_multi_sig(&env, commitment, recipient)
     }
 
+    /// Extend an escrow's expiry date by a configurable time period (Issue #113).
+    ///
+    /// Allows extensions with configurable time periods and maximum extension limits.
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `commitment` - 32-byte commitment hash identifying the escrow
+    /// * `extension_secs` - Number of seconds to extend the expiry
+    /// * `max_extensions` - Maximum number of extensions allowed (e.g., 3)
+    /// * `max_lifetime_secs` - Maximum total lifetime after all extensions
+    ///
+    /// # Errors
+    /// * `CommitmentNotFound` - No escrow exists for the commitment
+    /// * `AlreadySpent` - Escrow is not in `Pending` or `Disputed` status
+    /// * `MaxExtensionsReached` - Escrow has already been extended max_extensions times
+    /// * `ExtensionExceedsMaxLifetime` - Extension would exceed max_lifetime_secs
+    /// * `InvalidTimeout` - extension_secs would overflow
+    pub fn extend_escrow_expiry(
+        env: Env,
+        commitment: BytesN<32>,
+        extension_secs: u64,
+        max_extensions: u32,
+        max_lifetime_secs: u64,
+    ) -> Result<(), QuickexError> {
+        admin::require_initialized(&env)?;
+        pause_policy::require_entry_allowed(&env, EntryPoint::ExtendEscrowExpiry)?;
+        escrow::extend_escrow_expiry(&env, commitment, extension_secs, max_extensions, max_lifetime_secs)
+    }
+
+    /// Submit evidence for a disputed escrow (Issue #115).
+    ///
+    /// Evidence can be submitted by either party during a dispute. Evidence is stored
+    /// on-chain with a SHA256 hash and is visible to the arbiter and both parties.
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `commitment` - 32-byte commitment hash identifying the disputed escrow
+    /// * `evidence_hash` - SHA256 hash of the evidence data
+    /// * `submitter` - Address of the party submitting evidence (must authorize)
+    ///
+    /// # Errors
+    /// * `CommitmentNotFound` - No escrow exists for the commitment
+    /// * `InvalidDisputeState` - Escrow is not in `Disputed` status
+    /// * `InvalidEvidenceHash` - Evidence hash is all zeros
+    /// * `EvidenceSizeExceeded` - Evidence exceeds maximum allowed size
+    pub fn submit_dispute_evidence(
+        env: Env,
+        commitment: BytesN<32>,
+        evidence_hash: BytesN<32>,
+        submitter: Address,
+    ) -> Result<(), QuickexError> {
+        admin::require_initialized(&env)?;
+        escrow::submit_dispute_evidence(&env, commitment, evidence_hash, submitter)
+    }
+
+    /// Get dispute evidence for a commitment and evidence hash (Issue #115).
+    ///
+    /// Returns the evidence record if it exists, allowing arbiters and parties
+    /// to review evidence submitted during a dispute.
+    pub fn get_dispute_evidence(
+        env: Env,
+        commitment: BytesN<32>,
+        evidence_hash: BytesN<32>,
+    ) -> Option<crate::types::DisputeEvidence> {
+        escrow::get_dispute_evidence(&env, commitment, evidence_hash)
+    }
+
     /// Initialize the contract with an admin address (one-time only).
     ///
     /// Sets the admin who can pause/unpause, transfer admin, and upgrade the contract.
@@ -787,59 +875,39 @@ impl QuickexContract {
         admin::initialize(&env, admin)
     }
 
-    /// Bootstrap M-of-N governance once, authorized by the current legacy admin.
-    /// The minimum timelock is 24 hours; all later signer changes require proposals.
-    pub fn initialize_governance(
+    /// Initialize the contract with multiple admin signers and a signature threshold.
+    pub fn initialize_multisig(
+        env: Env,
+        signers: Vec<Address>,
+        threshold: u32,
+    ) -> Result<(), QuickexError> {
+        admin::initialize_multisig(&env, signers, threshold)
+    }
+
+    /// Approve the next privileged admin action for the caller's signer.
+    pub fn approve_admin_action(env: Env, caller: Address) -> Result<u32, QuickexError> {
+        admin::approve_admin_action(&env, &caller)
+    }
+
+    /// Replace the admin signer set and signature threshold (**Admin only**).
+    pub fn configure_multisig(
         env: Env,
         caller: Address,
         signers: Vec<Address>,
         threshold: u32,
-        timelock_secs: u64,
     ) -> Result<(), QuickexError> {
-        governance::initialize(&env, &caller, signers, threshold, timelock_secs)
-    }
-
-    /// Read the active governance signer set and quorum configuration.
-    pub fn get_governance_config(env: Env) -> Option<GovernanceConfig> {
-        governance::get_config(&env)
-    }
-
-    /// Create a timelocked proposal. The proposer contributes the first approval.
-    pub fn propose_governance_action(
-        env: Env,
-        proposer: Address,
-        action: GovernanceAction,
-    ) -> Result<u64, QuickexError> {
-        governance::propose(&env, &proposer, action)
-    }
-
-    /// Add an approval from an active signer.
-    pub fn approve_governance_proposal(
-        env: Env,
-        signer: Address,
-        proposal_id: u64,
-    ) -> Result<u32, QuickexError> {
-        governance::approve(&env, &signer, proposal_id)
-    }
-
-    /// Vote to cancel an unexecuted proposal; cancellation takes effect at quorum.
-    pub fn vote_to_cancel_governance_proposal(
-        env: Env,
-        signer: Address,
-        proposal_id: u64,
-    ) -> Result<bool, QuickexError> {
-        governance::vote_to_cancel(&env, &signer, proposal_id)
-    }
-
-    /// Execute a proposal once it has quorum approval and its timelock has elapsed.
-    pub fn execute_governance_proposal(env: Env, proposal_id: u64) -> Result<(), QuickexError> {
         pause_policy::require_admin_entry_allowed(&env)?;
-        governance::execute(&env, proposal_id)
+        admin::configure_multisig(&env, &caller, signers, threshold)
     }
 
-    /// Read proposal status, approvals, cancellation votes, and execute-after time.
-    pub fn get_governance_proposal(env: Env, proposal_id: u64) -> Option<GovernanceProposal> {
-        governance::get_proposal(&env, proposal_id)
+    /// Get the configured admin signers.
+    pub fn get_admin_signers(env: Env) -> Vec<Address> {
+        admin::get_admin_signers(&env)
+    }
+
+    /// Get the number of signatures required for the next admin action.
+    pub fn get_admin_threshold(env: Env) -> u32 {
+        admin::get_admin_threshold(&env)
     }
 
     /// Get the stored contract schema version.
@@ -1033,6 +1101,22 @@ impl QuickexContract {
         storage::get_fee_config(&env)
     }
 
+    /// Get the current TTL extension fee model (read-only).
+    pub fn get_ttl_extension_fee_config(env: Env) -> TtlExtensionFeeConfig {
+        storage::get_ttl_extension_fee_config(&env)
+    }
+
+    /// Set the TTL extension fee model (**Admin or Operator only**).
+    pub fn set_ttl_extension_fee_config(
+        env: Env,
+        caller: Address,
+        config: TtlExtensionFeeConfig,
+    ) -> Result<(), QuickexError> {
+        pause_policy::require_admin_entry_allowed(&env)?;
+        hook::assert_not_reentrant(&env)?;
+        admin::set_ttl_extension_fee_config(&env, &caller, config)
+    }
+
     /// Register an external hook contract to receive escrow lifecycle callbacks.
     pub fn register_hook(env: Env, hook_contract: Address) -> Result<(), QuickexError> {
         admin::require_initialized(&env)?;
@@ -1158,6 +1242,11 @@ impl QuickexContract {
     }
 
     /// Rotate active fee collector (**Admin only**).
+    ///
+    /// Enforces a 24-hour cooldown between rotations and maintains rotation history.
+    ///
+    /// # Errors
+    /// * `InvalidAmount` – Cooldown period has not elapsed since the last rotation
     pub fn rotate_fee_collector(
         env: Env,
         caller: Address,
@@ -1166,6 +1255,22 @@ impl QuickexContract {
         pause_policy::require_admin_entry_allowed(&env)?;
         hook::assert_not_reentrant(&env)?;
         admin::rotate_fee_collector(&env, &caller, new_collector)
+    }
+
+    /// Get the fee collector rotation history (read-only).
+    ///
+    /// Returns a chronological list of all fee collector rotations, including
+    /// when each rotation occurred, the new collector, and the previous collector.
+    pub fn get_fee_collector_history(env: Env) -> Vec<types::FeeCollectorRotationEntry> {
+        storage::get_fee_collector_rotation_history(&env)
+    }
+
+    /// Get the current pause status of the contract (read-only).
+    ///
+    /// Returns information about global pause, per-feature pauses, and their reason codes.
+    /// Useful for clients to determine which operations are currently available.
+    pub fn get_pause_status(env: Env) -> types::PauseStatus {
+        storage::get_pause_status(&env)
     }
 
     /// Read current active fee collector (rotation-aware).
@@ -1189,17 +1294,20 @@ impl QuickexContract {
     /// Check whether an escrow is currently eligible for `finalize_expired_escrow`,
     /// without submitting a state-changing transaction (read-only).
     ///
-    /// Intended for keepers/dapps to poll before calling `finalize_expired_escrow`,
-    /// and for indexers reconstructing refund availability off-chain.
+    /// Returns a normalized result containing both the boolean eligibility flag and
+    /// a machine-readable reason so backends can decide whether to call the refund
+    /// finalizer without emitting any events or mutating storage.
     ///
     /// # Arguments
     /// * `env` - The contract environment
     /// * `commitment` - 32-byte commitment hash identifying the escrow
-    ///
-    /// # Errors
-    /// * `CommitmentNotFound` - No escrow exists for the commitment
-    pub fn is_refund_eligible(env: Env, commitment: BytesN<32>) -> Result<bool, QuickexError> {
+    pub fn is_refund_eligible(env: Env, commitment: BytesN<32>) -> types::RefundEligibility {
         escrow::is_refund_eligible(&env, commitment)
+    }
+
+    /// Alias for the read-only refund eligibility view.
+    pub fn get_refund_eligibility(env: Env, commitment: BytesN<32>) -> types::RefundEligibility {
+        escrow::get_refund_eligibility(&env, commitment)
     }
 
     /// Verify withdrawal parameters without submitting a transaction (read-only).
@@ -1251,6 +1359,7 @@ impl QuickexContract {
     /// - If privacy is **disabled**, or `caller` equals the escrow owner,
     ///   all fields are returned in full.
     /// - If `caller` equals the arbiter, the arbiter field is always visible.
+    /// - Access attempts are logged as events for audit trails.
     ///
     /// # Arguments
     /// * `env` - The contract environment
@@ -1270,6 +1379,11 @@ impl QuickexContract {
         let is_arbiter = entry.arbiter.as_ref().is_some_and(|a| caller == *a);
         let show_sensitive = !privacy_on || is_owner || is_arbiter;
 
+        let was_redacted = privacy_on && !is_owner && !is_arbiter;
+        if was_redacted {
+            events::publish_privacy_access_attempt(&env, caller.clone(), entry.owner.clone(), true);
+        }
+
         if show_sensitive {
             Some(PrivacyAwareEscrowView {
                 token: entry.token,
@@ -1280,6 +1394,7 @@ impl QuickexContract {
                 created_at: entry.created_at,
                 expires_at: entry.expires_at,
                 arbiter: entry.arbiter,
+                memo: entry.memo,
             })
         } else {
             Some(PrivacyAwareEscrowView {
@@ -1291,6 +1406,7 @@ impl QuickexContract {
                 created_at: entry.created_at,
                 expires_at: entry.expires_at,
                 arbiter: None,
+                memo: None,
             })
         }
     }

@@ -62,6 +62,13 @@ describe("ApiKeyGuard", () => {
     expect(result).toBe(true);
   });
 
+  it("should require an API key when a scope is required", async () => {
+    mockReflector.getAllAndOverride.mockReturnValue(["admin"]);
+    const { ctx } = makeContext();
+
+    await expect(guard.canActivate(ctx)).rejects.toThrow(UnauthorizedException);
+  });
+
   it("should allow access when API key is valid", async () => {
     mockApiKeysService.validateKey.mockResolvedValue({
       record: {

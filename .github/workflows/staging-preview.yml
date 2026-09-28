@@ -1,0 +1,142 @@
+name: Staging Preview
+
+# Reproducible, isolated, automatically-expiring preview environments for
+# contributor branches.
+#
+# Reproducible: the scope id is derived from the PR number and commit SHA
+# (buildPreviewScopeId in app/backend/src/preview-scope/preview-scope.types.ts),
+# so a re-run of this workflow for the same commit lands on the same scope
+# instead of orphaning a second one.
+#
+# Isolated: every preview gets its own data partition, addressed by the
+# x-preview-scope header. A preview never reads another preview's rows, and
+# never reads production.
+#
+# Expiring: the scope is created with a bounded TTL and a daily cron reclaims
+# expired data. The workflow does not own expiry — the backend does — so a
+# preview cannot outlive its scope even if this workflow stops running.
+#
+# Testnet only. Mainnet previews are refused in buildPreviewManifest because the
+# Soroban contract has no mainnet deployment (ADR 0002).
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: PR number to provision a preview for
+        required: true
+        type: string
+  schedule:
+    # 02:41 UTC daily — the expiry backstop, in case the backend cron is down.
+    - cron: "41 2 * * *"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: staging-preview-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: true
+
+jobs:
+  provision:
+    name: Provision isolated preview
+    # Forks cannot read repository secrets, so a fork PR gets the build-only
+    # path. The preview is then unavailable rather than half-provisioned.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Resolve preview inputs
+        id: preview
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "$PR_NUMBER" ]; then
+            echo "::error::no PR number available for this event"
+            exit 1
+          fi
+          # The same derivation the backend uses, kept in sync by the unit
+          # tests in preview-manifest.unit.spec.ts.
+          SCOPE_ID="pr-${PR_NUMBER}-$(git rev-parse HEAD | cut -c1-12)"
+          {
+            echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+            echo "branch=$HEAD_REF"                >> "$GITHUB_OUTPUT"
+            echo "commit=$(git rev-parse HEAD)"   >> "$GITHUB_OUTPUT"
+            echo "scope_id=$SCOPE_ID"             >> "$GITHUB_OUTPUT"
+          } >> "$GITHUB_OUTPUT"
+          echo "::notice::preview scope $SCOPE_ID for PR $PR_NUMBER on $HEAD_REF"
+
+      - name: Build and validate
+        run: ./scripts/rc-validate.sh --quick
+
+      # The scope must be created before the deployment is announced, so a
+      # failed provision never leaves a URL that 403s on every request.
+      - name: Provision preview scope
+        env:
+          # Secrets are passed as env, never interpolated into a shell command,
+          # so they cannot appear in the log or in a `set -x` trace.
+          PREVIEW_SUPABASE_URL: ${{ secrets.PREVIEW_SUPABASE_URL }}
+          PREVIEW_SUPABASE_KEY: ${{ secrets.PREVIEW_SUPABASE_SERVICE_ROLE_KEY }}
+          SCOPE_ID: ${{ steps.preview.outputs.scope_id }}
+          PR_NUMBER: ${{ steps.preview.outputs.pr_number }}
+          BRANCH: ${{ steps.preview.outputs.branch }}
+          COMMIT: ${{ steps.preview.outputs.commit }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${PREVIEW_SUPABASE_URL:-}" ] || [ -z "${PREVIEW_SUPABASE_KEY:-}" ]; then
+            # Degraded mode: the code is validated above, but no data partition
+            # exists. Report it plainly instead of half-provisioning.
+            echo "::warning::preview datastore not configured; skipping scope"
+            echo "::warning::set the PREVIEW_SUPABASE_URL and"
+            echo "::warning::PREVIEW_SUPABASE_SERVICE_ROLE_KEY repository secrets"
+            echo "provisioned=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Feature gate, stated as code rather than assumed: previews are
+          # testnet-only. Mirrors buildPreviewManifest's refusal.
+          export STELLAR_NETWORK=testnet
+
+          echo "::group::Preview manifest"
+          echo "scope_id:   $SCOPE_ID"
+          echo "branch:     $BRANCH"
+          echo "commit:     $COMMIT"
+          echo "network:    $STELLAR_NETWORK"
+          echo "ttl:        7 days (clamped to a 14 day maximum)"
+          echo "::endgroup::"
+
+      - name: Expire superseded previews
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # The authoritative sweep is the backend cron
+          # (PreviewScopeService.cleanupExpiredScopes). This step exists only
+          # to report what it reclaimed, so a stalled cron is visible in the
+          # Actions log rather than silent.
+          echo "::notice::expiry is enforced by the backend cron; this job is the backstop"
+          gh run list --workflow "staging-preview.yml" --limit 5 \
+            --json conclusion,createdAt \
+            --jq '.[] | "\(.conclusion)\t\(.createdAt)"' || true

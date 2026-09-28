@@ -73,7 +73,9 @@ fn seed_escrow(
         #[allow(clippy::needless_borrow)]
         arbiters: Vec::new(&env),
         arbiter_threshold: 0,
-    };
+    memo: None,
+            milestones: Vec::new(env),
+        };
     env.as_contract(contract_id, || {
         let key: Bytes = commitment.into();
         put_escrow(env, &key, &entry);
@@ -272,7 +274,9 @@ fn expected_escrow_entry(
         arbiter,
         arbiters: Vec::new(env),
         arbiter_threshold: 0,
-    }
+    memo: None,
+            milestones: Vec::new(env),
+        }
 }
 
 fn legacy_privacy_storage_key(env: &Env, owner: &Address) -> (Symbol, Address) {
@@ -793,7 +797,9 @@ fn bench_common_escrow_storage_footprint() {
         arbiter: None,
         arbiters: Vec::new(&env),
         arbiter_threshold: 0,
-    };
+    memo: None,
+            milestones: Vec::new(env),
+        };
 
     let legacy_bytes = legacy_escrow_storage_footprint_bytes(&env, &commitment, &entry);
     let compact_bytes = compact_escrow_storage_footprint_bytes(&env, &commitment, &entry);
@@ -820,10 +826,71 @@ fn bench_arbiter_escrow_storage_footprint() {
         arbiter: Some(Address::generate(&env)),
         arbiters: Vec::new(&env),
         arbiter_threshold: 0,
-    };
+    memo: None,
+            milestones: Vec::new(env),
+        };
 
     let legacy_bytes = legacy_escrow_storage_footprint_bytes(&env, &commitment, &entry);
     let compact_bytes = compact_escrow_storage_footprint_bytes(&env, &commitment, &entry);
 
     print_storage_delta("arbiter_escrow_storage", legacy_bytes, compact_bytes);
+}
+
+/// Benchmark: initialize_multisig
+/// Measures the one-time signer and threshold configuration write path.
+#[test]
+fn bench_initialize_multisig() {
+    let (env, client) = setup();
+    let first = Address::generate(&env);
+    let second = Address::generate(&env);
+    let signers = soroban_sdk::vec![&env, first, second];
+
+    env.cost_estimate().budget().reset_default();
+    client.initialize_multisig(&signers, &2u32);
+    print_budget(&env, "initialize_multisig");
+}
+
+/// Benchmark: approve_admin_action
+/// Measures one signer recording approval for a multisig admin round.
+#[test]
+fn bench_approve_admin_action() {
+    let (env, client) = setup();
+    let first = Address::generate(&env);
+    let second = Address::generate(&env);
+    let signers = soroban_sdk::vec![&env, first.clone(), second];
+    client.initialize_multisig(&signers, &2u32);
+
+    env.cost_estimate().budget().reset_default();
+    client.approve_admin_action(&first);
+    print_budget(&env, "approve_admin_action");
+}
+
+/// Benchmark: quorum-authorized admin mutation.
+/// Includes the approval gate and the protected platform-wallet update.
+#[test]
+fn bench_multisig_admin_action() {
+    let (env, client) = setup();
+    let first = Address::generate(&env);
+    let second = Address::generate(&env);
+    let signers = soroban_sdk::vec![&env, first.clone(), second.clone()];
+    client.initialize_multisig(&signers, &2u32);
+    client.approve_admin_action(&first);
+    client.approve_admin_action(&second);
+    let wallet = Address::generate(&env);
+
+    env.cost_estimate().budget().reset_default();
+    client.set_platform_wallet(&first, &wallet);
+    print_budget(&env, "multisig_admin_action");
+}
+
+/// Benchmark: Admin role inheritance for an Operator-gated operation.
+#[test]
+fn bench_admin_operator_role_hierarchy() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+
+    env.cost_estimate().budget().reset_default();
+    client.set_paused(&admin, &true, &1u32);
+    print_budget(&env, "admin_operator_role_hierarchy");
 }

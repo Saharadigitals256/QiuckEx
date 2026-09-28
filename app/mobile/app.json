@@ -50,6 +50,7 @@
     },
     "plugins": [
       "expo-router",
+      "./plugins/withHomeScreenWidgets",
       [
         "expo-local-authentication",
         {

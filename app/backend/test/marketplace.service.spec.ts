@@ -7,11 +7,15 @@ import {
 } from "../src/supabase/supabase.service";
 import { MarketplaceError, MarketplaceErrorCode } from "../src/marketplace/errors";
 import { UsernamesService } from "../src/usernames/usernames.service";
+import { AppConfigService } from "../src/config";
 
 describe("MarketplaceService", () => {
   let service: MarketplaceService;
   let supabaseMock: Partial<SupabaseService>;
   let usernamesMock: Partial<UsernamesService>;
+  const configMock: Partial<AppConfigService> = {
+    marketplaceRestrictedUsernames: [],
+  };
 
   const mockListing: MarketplaceListing = {
     id: "listing-1",
@@ -55,15 +59,23 @@ describe("MarketplaceService", () => {
     supabaseMock = {
       getListingById: jest.fn().mockResolvedValue(mockListing),
       getBidsByListingIdPaginated: jest.fn().mockResolvedValue(mockBidPage),
+      getActiveListingByUsername: jest.fn().mockResolvedValue(null),
+      countActiveListingsBySeller: jest.fn().mockResolvedValue(0),
+      countPendingBidsByBidder: jest.fn().mockResolvedValue(0),
+      createListing: jest.fn().mockResolvedValue(mockListing),
+      placeBid: jest.fn().mockResolvedValue(mockBids[0]),
     };
 
-    usernamesMock = {};
+    usernamesMock = {
+      listByPublicKey: jest.fn().mockResolvedValue([{ username: "nova" }]),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MarketplaceService,
         { provide: SupabaseService, useValue: supabaseMock as jest.Mocked<SupabaseService> },
         { provide: UsernamesService, useValue: usernamesMock as jest.Mocked<UsernamesService> },
+        { provide: AppConfigService, useValue: configMock },
       ],
     }).compile();
 
@@ -166,6 +178,33 @@ describe("MarketplaceService", () => {
       ).rejects.toMatchObject({
         code: MarketplaceErrorCode.LISTING_NOT_FOUND,
       });
+    });
+  });
+
+  describe("listing invariants", () => {
+    it("rejects bids below the asking price floor", async () => {
+      const bidSpy = jest.fn().mockResolvedValue({ id: "b3" });
+      (supabaseMock as any).placeBid = bidSpy;
+
+      await expect(
+        service.placeBid("listing-1", "GBUYER1", 99),
+      ).rejects.toMatchObject({
+        code: MarketplaceErrorCode.INVALID_PRICE,
+      });
+
+      expect(bidSpy).not.toHaveBeenCalled();
+    });
+
+    it("treats an already cancelled listing as idempotent", async () => {
+      const cancelSpy = jest.fn().mockResolvedValue(undefined);
+      (supabaseMock as any).cancelListing = cancelSpy;
+      (supabaseMock.getListingById as jest.Mock).mockResolvedValue({
+        ...mockListing,
+        status: "cancelled",
+      });
+
+      await expect(service.cancelListing("listing-1", mockListing.seller_public_key)).resolves.toBeUndefined();
+      expect(cancelSpy).not.toHaveBeenCalled();
     });
   });
 });

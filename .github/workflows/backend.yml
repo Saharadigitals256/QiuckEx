@@ -41,6 +41,14 @@ jobs:
       - name: Build
         run: pnpm run build
 
+      - name: OpenAPI spec must not diverge
+        run: pnpm run docs:export:check
+        env:
+          NODE_ENV: test
+          NETWORK: testnet
+          SUPABASE_URL: https://spec-export.supabase.co
+          SUPABASE_ANON_KEY: spec-export-key
+
       # Tests are run separately to avoid CI failures during development
       # Uncomment when tests are stable
       # - name: Run Unit Tests
@@ -66,3 +74,12 @@ jobs:
           STELLAR_NETWORK: testnet
           SUPABASE_URL: https://test.supabase.co
           SUPABASE_ANON_KEY: test-key
+
+      - name: Database Migration Forward and Rollback Verification
+        run: pnpm run db:verify-migrations
+
+      - name: Financial Authorization Mutation Testing
+        run: pnpm run test:mutation
+
+      - name: Horizon-Backed Endpoints Performance Regression Tests
+        run: pnpm run test:perf:horizon

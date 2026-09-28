@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Query,
   Param,
   ConflictException,
@@ -22,6 +23,7 @@ import { EventEmitter2 } from "@nestjs/event-emitter";
 
 import {
   CreateUsernameDto,
+  ClaimUsernameDto,
   CreateUsernameResponseDto,
   ListUsernamesQueryDto,
   ListUsernamesResponseDto,
@@ -34,6 +36,7 @@ import {
   FeaturedUsernamesQueryDto,
   FeaturedUsernamesResponseDto,
   PublicProfileDto,
+  ProfileSettingsDto,
 } from "../dto";
 import { UsernamesService } from "./usernames.service";
 import {
@@ -41,6 +44,7 @@ import {
   UsernameLimitExceededError,
   UsernameValidationError,
   UsernameErrorCode,
+  UsernameClaimInvalidError,
 } from "./errors";
 
 @ApiTags("usernames")
@@ -50,6 +54,50 @@ export class UsernamesController {
     private readonly usernamesService: UsernamesService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
+
+  @Post("claim")
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @ApiOperation({
+    summary: "Claim a username with an on-chain verified signature",
+    description:
+      "The signature must be <unix milliseconds>.<base64 signature> over " +
+      "QuickEx username claim\\n<normalized username>\\n<timestamp>.",
+  })
+  @ApiBody({ type: ClaimUsernameDto })
+  @ApiResponse({ status: 201, description: "Username claimed successfully" })
+  @ApiResponse({ status: 400, description: "Invalid claim signature" })
+  @ApiResponse({ status: 409, description: "Username already taken" })
+  async claimUsername(@Body() body: ClaimUsernameDto): Promise<CreateUsernameResponseDto> {
+    try {
+      await this.usernamesService.verifyAndCreateClaim(
+        body.username,
+        body.signature,
+        body.publicKey,
+      );
+    } catch (err) {
+      if (err instanceof UsernameConflictError) {
+        throw new ConflictException({ code: "USERNAME_CONFLICT", message: err.message });
+      }
+      if (err instanceof UsernameLimitExceededError) {
+        throw new ForbiddenException({ code: "USERNAME_LIMIT_EXCEEDED", message: err.message });
+      }
+      if (err instanceof UsernameClaimInvalidError) {
+        throw new BadRequestException({ code: UsernameErrorCode.CLAIM_INVALID, message: err.message });
+      }
+      if (err instanceof UsernameValidationError) {
+        throw new BadRequestException({ code: err.code, message: err.message, field: err.field });
+      }
+      throw err;
+    }
+
+    this.eventEmitter.emit("username.claimed", {
+      username: body.username,
+      publicKey: body.publicKey,
+      timestamp: new Date().toISOString(),
+    });
+
+    return { ok: true };
+  }
 
   @Post()
   @Throttle({ default: { limit: 10, ttl: 60000 } }) // 10 requests per minute
@@ -149,6 +197,39 @@ export class UsernamesController {
       query.publicKey,
     );
     return { usernames };
+  }
+
+  @Get("profile")
+  @ApiOperation({ summary: "Get editable profile settings for a wallet" })
+  @ApiResponse({ status: 200, description: "Profile settings owned by the wallet" })
+  async getProfileSettings(
+    @Query() query: ListUsernamesQueryDto,
+  ) {
+    const profiles = await this.usernamesService.getProfileSettings(query.publicKey);
+    return { profiles };
+  }
+
+  @Patch("profile")
+  @ApiOperation({ summary: "Save validated profile settings with conflict detection" })
+  @ApiBody({ type: ProfileSettingsDto })
+  @ApiResponse({ status: 200, description: "Profile settings saved" })
+  @ApiResponse({ status: 403, description: "Profile is not owned by this wallet" })
+  @ApiResponse({ status: 409, description: "Profile changed since it was loaded" })
+  async updateProfileSettings(@Body() body: ProfileSettingsDto) {
+    const result = await this.usernamesService.updateProfileSettings(body);
+    if (result.status === "not_found") {
+      throw new ForbiddenException({
+        code: "PROFILE_NOT_OWNED",
+        message: "Profile not found for this wallet",
+      });
+    }
+    if (result.status === "conflict") {
+      throw new ConflictException({
+        code: "PROFILE_CONFLICT",
+        message: "Profile changed since it was loaded",
+      });
+    }
+    return { profile: result.profile };
   }
 
   @Get("search")

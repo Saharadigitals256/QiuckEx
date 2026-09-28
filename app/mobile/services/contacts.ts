@@ -1,39 +1,26 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Contact } from '../types/contact';
 import * as Crypto from 'expo-crypto';
-import NetInfo from '@react-native-community/netinfo';
-
-let supabase: any = null;
-try {
-  supabase = require('./supabase').supabase;
-} catch {}
+import { StrKey } from '@stellar/stellar-base';
 
 const CONTACTS_KEY = 'contacts';
-const SUPABASE_TABLE = 'contacts';
 
-function isSupabaseConfigured() {
-  return !!process.env.EXPO_PUBLIC_SUPABASE_URL && !!process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+export function isValidContactAddress(address: string): boolean {
+  return StrKey.isValidEd25519PublicKey(address.trim());
 }
 
 export async function getContacts(): Promise<Contact[]> {
-  const netInfo = await NetInfo.fetch();
-  
-  if (isSupabaseConfigured() && supabase && netInfo.isConnected !== false) {
-    try {
-      const { data, error } = await supabase.from(SUPABASE_TABLE).select('*').order('updatedAt', { ascending: false });
-      if (!error && data) {
-        // Sync local cache with remote data
-        await AsyncStorage.setItem(CONTACTS_KEY, JSON.stringify(data));
-        return data;
-      }
-    } catch (e) {
-      console.warn("Failed to fetch contacts from Supabase, falling back to cache", e);
-    }
-  }
-  
-  // Fallback to local cache
   const data = await AsyncStorage.getItem(CONTACTS_KEY);
-  return data ? JSON.parse(data) : [];
+  if (!data) return [];
+
+  try {
+    const parsed: unknown = JSON.parse(data);
+    if (!Array.isArray(parsed)) throw new Error('Stored contacts are not an array');
+    return parsed as Contact[];
+  } catch {
+    await AsyncStorage.removeItem(CONTACTS_KEY);
+    return [];
+  }
 }
 
 export async function saveContact(contact: Omit<Contact, 'id' | 'createdAt' | 'updatedAt'>): Promise<Contact> {
@@ -44,37 +31,19 @@ export async function saveContact(contact: Omit<Contact, 'id' | 'createdAt' | 'u
     updatedAt: Date.now(),
   };
 
-  const netInfo = await NetInfo.fetch();
-  if (isSupabaseConfigured() && supabase && netInfo.isConnected !== false) {
-    await supabase.from(SUPABASE_TABLE).insert([newContact]);
-  }
-  
-  // Always update local cache
   const contacts = await getContacts();
   await AsyncStorage.setItem(CONTACTS_KEY, JSON.stringify([newContact, ...contacts]));
   return newContact;
 }
 
 export async function updateContact(updated: Contact): Promise<void> {
-  const netInfo = await NetInfo.fetch();
-  if (isSupabaseConfigured() && supabase && netInfo.isConnected !== false) {
-    await supabase.from(SUPABASE_TABLE).update({ ...updated, updatedAt: Date.now() }).eq('id', updated.id);
-  }
-  
-  // Always update local cache
   const contacts = await getContacts();
   const next = contacts.map(c => c.id === updated.id ? { ...updated, updatedAt: Date.now() } : c);
-  await AsyncStorage.setItem(CONTACTS_KEY, JSON.stringify(next));
+  await cacheContacts(next);
 }
 
 export async function deleteContact(id: string): Promise<void> {
-  const netInfo = await NetInfo.fetch();
-  if (isSupabaseConfigured() && supabase && netInfo.isConnected !== false) {
-    await supabase.from(SUPABASE_TABLE).delete().eq('id', id);
-  }
-  
-  // Always update local cache
   const contacts = await getContacts();
   const next = contacts.filter(c => c.id !== id);
-  await AsyncStorage.setItem(CONTACTS_KEY, JSON.stringify(next));
+  await cacheContacts(next);
 }

@@ -15,7 +15,6 @@
     "target": "ESNext",
     "strict": true,
     "ignoreDeprecations": "5.0",
-    "baseUrl": ".",
     "paths": {
       "@/*": ["./*"]
     }
@@ -27,6 +26,12 @@
     "metro.config.js",
     "jest.config.js",
     "android",
-    "ios"
+    "ios",
+    "**/__tests__/**",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx",
+    "*.example.tsx"
   ]
 }

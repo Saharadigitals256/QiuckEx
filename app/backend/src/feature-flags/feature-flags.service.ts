@@ -70,6 +70,61 @@ const DEFAULT_FLAGS: FeatureFlagRecord[] = [
     updatedAt: new Date(0).toISOString(),
     updatedBy: 'bootstrap',
   },
+  // ── Governance flags (issues #306, #307) ─────────────────────────────────
+  // Enabled on local/test only: mainnet enforcement requires the policy review
+  // sign-off recorded in docs/policies/*.json (defaultDisabledNetworks).
+  {
+    key: 'assets.listing_policy',
+    name: 'Asset Listing Policy Enforcement',
+    description: 'Filters the served asset list by the published asset listing policy.',
+    enabled: true,
+    killSwitch: false,
+    rolloutPercentage: 100,
+    allowedUsers: [],
+    environments: ['development', 'test'],
+    metadata: { highRisk: false, flow: 'asset_listing', policy: 'quickex.asset-listing', network: 'testnet' },
+    updatedAt: new Date(0).toISOString(),
+    updatedBy: 'bootstrap',
+  },
+  {
+    key: 'assets.listing_decisions',
+    name: 'Asset Listing Decisions',
+    description: 'Allows governed list/suspend/delist/re-list decisions via the admin API.',
+    enabled: true,
+    killSwitch: false,
+    rolloutPercentage: 100,
+    allowedUsers: [],
+    environments: ['development', 'test'],
+    metadata: { highRisk: true, flow: 'asset_listing', policy: 'quickex.asset-listing', network: 'testnet' },
+    updatedAt: new Date(0).toISOString(),
+    updatedBy: 'bootstrap',
+  },
+  {
+    key: 'privacy.deletion_requests',
+    name: 'Privacy Deletion Requests',
+    description: 'Enables signed proof-of-control deletion request intake.',
+    enabled: true,
+    killSwitch: false,
+    rolloutPercentage: 100,
+    allowedUsers: [],
+    environments: ['development', 'test'],
+    metadata: { highRisk: false, flow: 'privacy', policy: 'quickex.data-retention', network: 'testnet' },
+    updatedAt: new Date(0).toISOString(),
+    updatedBy: 'bootstrap',
+  },
+  {
+    key: 'privacy.retention_sweep',
+    name: 'Privacy Retention Sweep',
+    description: 'Enables the scheduled retention sweep and its admin trigger.',
+    enabled: true,
+    killSwitch: false,
+    rolloutPercentage: 100,
+    allowedUsers: [],
+    environments: ['development', 'test'],
+    metadata: { highRisk: true, flow: 'privacy', policy: 'quickex.data-retention', network: 'testnet' },
+    updatedAt: new Date(0).toISOString(),
+    updatedBy: 'bootstrap',
+  },
   // ── Existing flags ────────────────────────────────────────────────────────
   {
     key: 'testnet.contract_writes',
@@ -107,6 +162,52 @@ const DEFAULT_FLAGS: FeatureFlagRecord[] = [
     allowedUsers: [],
     environments: ['development', 'test', 'production'],
     metadata: { surface: 'links/bulk', riskyAction: true },
+    updatedAt: new Date(0).toISOString(),
+    updatedBy: 'bootstrap',
+  },
+  // ── Username search ranking weights (issue #28) ───────────────────────────
+  // Defaults: isFeatured and lastActiveAt have the highest priority.
+  // Weights are relative (they are normalised internally before use).
+  {
+    key: 'username.ranking_weights',
+    name: 'Username Search Ranking Weights',
+    description:
+      'Configurable weights for the username search ranking formula. ' +
+      'Fields: similarity, transactionVolume, lastActiveAt, isFeatured. ' +
+      'Weights are normalised to sum to 1 before scoring.',
+    enabled: true,
+    killSwitch: false,
+    rolloutPercentage: 100,
+    allowedUsers: [],
+    environments: ['development', 'test', 'production'],
+    metadata: {
+      similarity: 1,
+      transactionVolume: 0.5,
+      lastActiveAt: 1,
+      isFeatured: 2,
+    },
+    updatedAt: new Date(0).toISOString(),
+    updatedBy: 'bootstrap',
+  },
+  // ── Username on-chain claim reconciliation (issue #193) ──────────────────
+  // Enabled on local/test only. Mainnet enablement requires operational sign-off
+  // and review of Horizon call volume at production scale.
+  {
+    key: 'username.claim_reconciliation',
+    name: 'Username Claim Reconciliation',
+    description:
+      'Enables on-chain username claim reconciliation against Stellar Horizon. ' +
+      'Flags claimed usernames whose owning Stellar account is no longer active.',
+    enabled: true,
+    killSwitch: false,
+    rolloutPercentage: 100,
+    allowedUsers: [],
+    environments: ['development', 'test'],
+    metadata: {
+      batchSize: 50,
+      retryMaxAttempts: 3,
+      retryBaseMs: 500,
+    },
     updatedAt: new Date(0).toISOString(),
     updatedBy: 'bootstrap',
   },
@@ -293,16 +394,6 @@ export class FeatureFlagsService {
         storeAvailable: true,
         expiresAt: Date.now() + this.configService.featureFlagsCacheTtlMs,
       };
-
-      await this.auditService.log(
-        actor,
-        'feature_flag.updated',
-        key,
-        {
-          before: current,
-          after: persisted,
-        },
-      );
 
       return persisted;
     } catch (error) {

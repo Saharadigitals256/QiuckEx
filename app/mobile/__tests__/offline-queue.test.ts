@@ -1,5 +1,4 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import NetInfo from "@react-native-community/netinfo";
 import {
   getOfflineQueue,
   saveOfflineQueue,
@@ -9,6 +8,8 @@ import {
   updateQueueItem,
   retryQueuedAction,
   processOfflineQueue,
+  registerActionHandler,
+  cancelQueuedAction,
 } from "../services/offline-queue";
 
 jest.mock("@react-native-async-storage/async-storage", () => {
@@ -27,14 +28,17 @@ jest.mock("@react-native-async-storage/async-storage", () => {
   };
 });
 
-jest.mock("@react-native-community/netinfo", () => ({
-  fetch: jest.fn(),
-}));
-
 describe("Offline Action Queue Service", () => {
+  const SUCCESS_ACTION = "test.success";
+  const FAILURE_ACTION = "test.failure";
+
   beforeEach(async () => {
     jest.clearAllMocks();
     await AsyncStorage.clear();
+    registerActionHandler(SUCCESS_ACTION, async () => undefined);
+    registerActionHandler(FAILURE_ACTION, async () => {
+      throw new Error("Test handler failure");
+    });
   });
 
   it("should start with an empty queue", async () => {
@@ -43,9 +47,9 @@ describe("Offline Action Queue Service", () => {
   });
 
   it("should enqueue a new action and mark it as pending", async () => {
-    const action = await enqueueAction("mock-success", { key: "value" });
+    const action = await enqueueAction(SUCCESS_ACTION, { key: "value" });
     expect(action.id).toBeDefined();
-    expect(action.type).toBe("mock-success");
+    expect(action.type).toBe(SUCCESS_ACTION);
     expect(action.payload).toEqual({ key: "value" });
     expect(action.status).toBe("pending");
     expect(action.attempts).toBe(0);
@@ -58,8 +62,8 @@ describe("Offline Action Queue Service", () => {
   });
 
   it("should dequeue an action by ID", async () => {
-    const action1 = await enqueueAction("mock-success", { id: 1 });
-    const action2 = await enqueueAction("mock-failure", { id: 2 });
+    const action1 = await enqueueAction(SUCCESS_ACTION, { id: 1 });
+    const action2 = await enqueueAction(FAILURE_ACTION, { id: 2 });
 
     let queue = await getOfflineQueue();
     expect(queue).toHaveLength(2);
@@ -71,8 +75,8 @@ describe("Offline Action Queue Service", () => {
   });
 
   it("should clear the entire queue", async () => {
-    await enqueueAction("mock-success", { id: 1 });
-    await enqueueAction("mock-failure", { id: 2 });
+    await enqueueAction(SUCCESS_ACTION, { id: 1 });
+    await enqueueAction(FAILURE_ACTION, { id: 2 });
 
     let queue = await getOfflineQueue();
     expect(queue).toHaveLength(2);
@@ -83,7 +87,7 @@ describe("Offline Action Queue Service", () => {
   });
 
   it("should update metadata fields on a queue item", async () => {
-    const action = await enqueueAction("mock-success", { foo: "bar" });
+    const action = await enqueueAction(SUCCESS_ACTION, { foo: "bar" });
     const updated = await updateQueueItem(action.id, {
       status: "failed",
       attempts: 3,
@@ -99,8 +103,8 @@ describe("Offline Action Queue Service", () => {
     expect(queue[0].status).toBe("failed");
   });
 
-  it("should process a mock-success action successfully", async () => {
-    const action = await enqueueAction("mock-success", { foo: "bar" });
+  it("should process a registered action successfully", async () => {
+    const action = await enqueueAction(SUCCESS_ACTION, { foo: "bar" });
     const result = await retryQueuedAction(action.id);
 
     expect(result?.status).toBe("completed");
@@ -108,35 +112,19 @@ describe("Offline Action Queue Service", () => {
     expect(result?.failureReason).toBeNull();
   });
 
-  it("should record failure reasons when a mock-failure action fails", async () => {
-    const action = await enqueueAction("mock-failure", { foo: "bar" });
+  it("should record failure reasons when a registered action fails", async () => {
+    const action = await enqueueAction(FAILURE_ACTION, { foo: "bar" });
     const result = await retryQueuedAction(action.id);
 
     expect(result?.status).toBe("failed");
     expect(result?.attempts).toBe(1);
-    expect(result?.failureReason).toBe("Simulated network timeout/offline error");
-  });
-
-  it("should evaluate network connection on mock-payment actions", async () => {
-    const action = await enqueueAction("mock-payment", { amount: "10.00" });
-
-    // Scenario A: Offline retry
-    (NetInfo.fetch as jest.Mock).mockResolvedValue({ isConnected: false });
-    const resultOffline = await retryQueuedAction(action.id);
-    expect(resultOffline?.status).toBe("failed");
-    expect(resultOffline?.failureReason).toBe("Cannot send payment: Device is offline");
-
-    // Scenario B: Online retry
-    (NetInfo.fetch as jest.Mock).mockResolvedValue({ isConnected: true });
-    const resultOnline = await retryQueuedAction(action.id);
-    expect(resultOnline?.status).toBe("completed");
-    expect(resultOnline?.failureReason).toBeNull();
+    expect(result?.failureReason).toBe("Test handler failure");
   });
 
   it("should process all pending and failed actions sequentially", async () => {
-    const act1 = await enqueueAction("mock-success", { number: 1 });
-    const act2 = await enqueueAction("mock-failure", { number: 2 });
-    const act3 = await enqueueAction("mock-success", { number: 3 });
+    const act1 = await enqueueAction(SUCCESS_ACTION, { number: 1 });
+    const act2 = await enqueueAction(FAILURE_ACTION, { number: 2 });
+    const act3 = await enqueueAction(SUCCESS_ACTION, { number: 3 });
 
     // Mark act3 as completed manually first so it's skipped
     await updateQueueItem(act3.id, { status: "completed" });
@@ -152,5 +140,114 @@ describe("Offline Action Queue Service", () => {
     expect(statusMap.get(act1.id)?.attempts).toBe(1);
     expect(statusMap.get(act2.id)?.attempts).toBe(1);
     expect(statusMap.get(act3.id)?.attempts).toBe(0);
+  });
+
+  describe("Idempotency deduplication", () => {
+    it("deduplicates action when idempotencyKey is already pending or completed", async () => {
+      const first = await enqueueAction(SUCCESS_ACTION, { msg: "hello" }, {
+        idempotencyKey: "unique-key-1",
+      });
+
+      const second = await enqueueAction(SUCCESS_ACTION, { msg: "hello again" }, {
+        idempotencyKey: "unique-key-1",
+      });
+
+      expect(second.id).toBe(first.id);
+      const queue = await getOfflineQueue();
+      expect(queue).toHaveLength(1);
+
+      // Now complete it
+      await retryQueuedAction(first.id);
+
+      // Enqueueing again with same key returns existing completed action
+      const third = await enqueueAction(SUCCESS_ACTION, { msg: "third" }, {
+        idempotencyKey: "unique-key-1",
+      });
+      expect(third.id).toBe(first.id);
+      expect(third.status).toBe("completed");
+    });
+  });
+
+  describe("Dependency ordering", () => {
+    it("waits for predecessor dependency to complete before executing dependent action", async () => {
+      const step1 = await enqueueAction(SUCCESS_ACTION, { step: 1 }, {
+        idempotencyKey: "step-1",
+      });
+      const step2 = await enqueueAction(SUCCESS_ACTION, { step: 2 }, {
+        dependsOn: ["step-1"],
+      });
+
+      // Retrying step2 directly while step1 is pending is deferred
+      const directRetry = await retryQueuedAction(step2.id);
+      expect(directRetry?.status).toBe("pending");
+      expect(directRetry?.attempts).toBe(0);
+
+      // Run processOfflineQueue which resolves in dependency order
+      await processOfflineQueue();
+
+      const queue = await getOfflineQueue();
+      const s1 = queue.find((i) => i.id === step1.id);
+      const s2 = queue.find((i) => i.id === step2.id);
+
+      expect(s1?.status).toBe("completed");
+      expect(s2?.status).toBe("completed");
+      expect(s2?.attempts).toBe(1);
+    });
+
+    it("fails dependent action if its dependency fails", async () => {
+      const failedDep = await enqueueAction(FAILURE_ACTION, { fail: true }, {
+        idempotencyKey: "failed-dep-1",
+      });
+      const dependent = await enqueueAction(SUCCESS_ACTION, { run: false }, {
+        dependsOn: ["failed-dep-1"],
+      });
+
+      // Process queue - first action will fail, second action should cascade fail
+      await processOfflineQueue();
+
+      const queue = await getOfflineQueue();
+      const dep = queue.find((i) => i.id === dependent.id);
+      expect(dep?.status).toBe("failed");
+      expect(dep?.failureReason).toContain("failed");
+    });
+  });
+
+  describe("Dead letter & Cancellation", () => {
+    it("transitions to dead_letter after maxAttempts exceeded", async () => {
+      const action = await enqueueAction(FAILURE_ACTION, { max: true }, {
+        maxAttempts: 2,
+      });
+
+      // Attempt 1
+      await retryQueuedAction(action.id);
+      let item = (await getOfflineQueue()).find((i) => i.id === action.id);
+      expect(item?.status).toBe("failed");
+      expect(item?.attempts).toBe(1);
+
+      // Attempt 2 (reaches maxAttempts, force retry bypassing backoff delay)
+      await retryQueuedAction(action.id, true);
+      item = (await getOfflineQueue()).find((i) => i.id === action.id);
+      expect(item?.status).toBe("dead_letter");
+      expect(item?.attempts).toBe(2);
+      expect(item?.failureReason).toContain("Max retry attempts");
+    });
+
+    it("cancels an action and cascades cancellation to dependent actions", async () => {
+      const actA = await enqueueAction(SUCCESS_ACTION, { a: 1 });
+      const actB = await enqueueAction(SUCCESS_ACTION, { b: 2 }, {
+        dependsOn: [actA.id],
+      });
+
+      await cancelQueuedAction(actA.id, true);
+
+      const queue = await getOfflineQueue();
+      const itemA = queue.find((i) => i.id === actA.id);
+      const itemB = queue.find((i) => i.id === actB.id);
+
+      expect(itemA?.status).toBe("failed");
+      expect(itemA?.failureReason).toContain("Cancelled");
+      expect(itemB?.status).toBe("failed");
+      expect(itemB?.failureReason).toContain("Cancelled");
+    });
   });
 });

@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { redactPII } from "@/lib/errorReporter";
+import { useFocusTrap } from "@/hooks/useFocusTrap";
 
 type ReportIssueModalProps = {
   open: boolean;
@@ -22,14 +23,8 @@ export function ReportIssueModal({
   const [status, setStatus] = useState<"idle" | "submitting" | "success">(
     "idle"
   );
-  const modalRef = useRef<HTMLDivElement | null>(null);
-  const submitButtonRef = useRef<HTMLButtonElement | null>(null);
-
   useEffect(() => {
-    if (open) {
-      setStatus("idle");
-      submitButtonRef.current?.focus();
-    }
+    if (open) setStatus("idle");
   }, [open]);
 
   const sanitizedSummary = useMemo(
@@ -42,6 +37,8 @@ export function ReportIssueModal({
     setStatus("idle");
     onClose();
   };
+
+  const modalRef = useFocusTrap<HTMLDivElement>(open, handleClose);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -56,38 +53,6 @@ export function ReportIssueModal({
     setStatus("success");
   };
 
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Escape") {
-      event.stopPropagation();
-      handleClose();
-    }
-
-    if (event.key !== "Tab" || !modalRef.current) {
-      return;
-    }
-
-    const focusableElements = Array.from(
-      modalRef.current.querySelectorAll<HTMLElement>(
-        "button, a[href], input, textarea, select, [tabindex]:not([tabindex='-1'])"
-      )
-    ).filter((element) => !element.hasAttribute("disabled"));
-
-    if (focusableElements.length === 0) {
-      return;
-    }
-
-    const firstElement = focusableElements[0];
-    const lastElement = focusableElements[focusableElements.length - 1];
-
-    if (event.shiftKey && document.activeElement === firstElement) {
-      event.preventDefault();
-      lastElement.focus();
-    } else if (!event.shiftKey && document.activeElement === lastElement) {
-      event.preventDefault();
-      firstElement.focus();
-    }
-  };
-
   if (!open) {
     return null;
   }
@@ -98,7 +63,6 @@ export function ReportIssueModal({
       aria-modal="true"
       aria-labelledby="report-issue-title"
       className="fixed inset-0 z-50 flex items-center justify-center bg-background/50 px-4 py-6"
-      onKeyDown={handleKeyDown}
     >
       <div
         ref={modalRef}
@@ -160,7 +124,6 @@ export function ReportIssueModal({
               Your message will be sanitized before sending.
             </p>
             <button
-              ref={submitButtonRef}
               type="submit"
               disabled={status === "submitting" || status === "success"}
               className="inline-flex items-center justify-center rounded-full bg-card px-6 py-3 text-sm font-semibold text-foreground transition hover:bg-surface-strong disabled:cursor-not-allowed disabled:opacity-50"

@@ -1,0 +1,122 @@
+name: Release Candidate Validation
+
+# One command, one definition of the gate. This workflow calls
+# scripts/rc-validate.sh — the same script a contributor runs locally — so
+# "green locally" and "green in CI" cannot mean different things.
+#
+# Triggers:
+#   workflow_dispatch — the manual release-candidate gate, including the slow
+#                      stages that per-PR CI does not run.
+#   pull_request      — `--quick` only, on backend and CI path changes. This is
+#                      an early-warning signal, not the release gate.
+#   schedule          — nightly regression run against main, so a candidate is
+#                      never validated only at the moment someone remembers to.
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "Stages to run (comma-separated, blank = all)"
+        type: string
+        default: ""
+      allow_skip:
+        description: "Accept the run when an optional stage is skipped"
+        type: boolean
+        default: false
+      ref:
+        description: "Ref to validate"
+        type: string
+        default: "main"
+  pull_request:
+    branches: [main]
+    paths:
+      - "app/backend/**"
+      - "scripts/rc-validate.sh"
+      - ".github/workflows/rc-validate.yml"
+  schedule:
+    # 04:23 UTC daily.
+    - cron: "23 4 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rc-validate-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  validate:
+    name: Validate release candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # The capability-map stage diffs against the base ref.
+          fetch-depth: 0
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/contract
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install detect-secrets
+        run: pip install detect-secrets
+
+      # Placeholder credentials for the OpenAPI export. The export boots the
+      # Nest app, which validates its environment with Joi, but never reaches
+      # Supabase. These are not secrets and must never be replaced with real
+      # credentials in this workflow file.
+      - name: Run release candidate gate
+        env:
+          # A candidate is validated against testnet only. The script refuses
+          # mainnet outright — see docs/adr/0002.
+          STELLAR_NETWORK: testnet
+          RC_BASE_REF: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          ARGS=()
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            ARGS+=(--quick)
+          fi
+          if [ -n "${{ inputs.stage }}" ]; then
+            ARGS+=(--stage "${{ inputs.stage }}")
+          fi
+          if [ "${{ inputs.allow_skip }}" = "true" ]; then
+            ARGS+=(--allow-skip)
+          fi
+          ./scripts/rc-validate.sh "${ARGS[@]}"
+
+      - name: Upload gate report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rc-validation-${{ github.run_id }}
+          path: |
+            /tmp/rc-*.log
+          retention-days: 14
+          if-no-files-found: ignore

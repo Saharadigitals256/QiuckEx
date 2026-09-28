@@ -1,0 +1,10 @@
+{
+  "defaultGzipKiB": 450,
+  "routes": {
+    "/": 250,
+    "/dashboard": 450,
+    "/generator": 400,
+    "/marketplace": 400,
+    "/pay": 300
+  }
+}

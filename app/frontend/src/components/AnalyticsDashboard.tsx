@@ -34,6 +34,8 @@ import {
   type DateRange,
   type AnalyticsData,
 } from "@/hooks/analyticsApi";
+import { getQuickexApiBase } from "@/lib/api";
+import { resolvePublicKey } from "@/lib/publicKey";
 
 // ─── Date-range filter ────────────────────────────────────────────────────────
 
@@ -172,6 +174,7 @@ export default function AnalyticsDashboard() {
   const [range, setRange] = useState<DateRange>("30d");
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [realtimeConnected, setRealtimeConnected] = useState(false);
   const [reportType, setReportType] = useState<"accounting" | "tax">("accounting");
   const [exporting, setExporting] = useState<"csv" | "pdf" | null>(null);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
@@ -187,6 +190,22 @@ export default function AnalyticsDashboard() {
   useEffect(() => {
     load(range);
   }, [range, load]);
+
+  useEffect(() => {
+    const streamUrl = new URL(`${getQuickexApiBase()}/analytics/events`);
+    streamUrl.searchParams.set("publicKey", resolvePublicKey());
+    const source = new EventSource(streamUrl.toString());
+    const handleUpdate = () => load(range);
+
+    source.onopen = () => setRealtimeConnected(true);
+    source.onerror = () => setRealtimeConnected(false);
+    source.addEventListener("analytics.updated", handleUpdate);
+
+    return () => {
+      source.removeEventListener("analytics.updated", handleUpdate);
+      source.close();
+    };
+  }, [load, range]);
 
   useEffect(() => {
     if (!exportMessage) return;
@@ -232,37 +251,51 @@ export default function AnalyticsDashboard() {
           <p className="text-xs sm:text-sm text-subtle">
             Payment volume, transaction counts &amp; asset distribution
           </p>
+          <p className="mt-2 text-[11px] font-bold text-muted" aria-live="polite">
+            <span className={`mr-1.5 inline-block h-2 w-2 rounded-full ${realtimeConnected ? "bg-emerald-400" : "bg-amber-400"}`} />
+            {realtimeConnected ? "Live updates enabled" : "Live updates reconnecting"}
+          </p>
         </div>
         <div className="flex flex-col gap-3 sm:items-end">
           <DateRangeFilter active={range} onChange={setRange} />
-          <div className="flex items-center gap-2">
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:justify-end">
+            <label className="text-[10px] font-black uppercase tracking-widest text-subtle sm:sr-only" htmlFor="analytics-report-type">
+              Report type
+            </label>
             <select
+              id="analytics-report-type"
               value={reportType}
               onChange={(event) =>
                 setReportType(event.target.value as "accounting" | "tax")
               }
-              className="rounded-lg border border-border-strong bg-surface px-2 py-1.5 text-xs font-black text-muted"
-              aria-label="Select report type"
+              className="w-full rounded-lg border border-border-strong bg-surface px-2 py-2 text-xs font-black text-muted sm:w-auto"
             >
               <option value="accounting">Accounting</option>
               <option value="tax">Tax</option>
             </select>
-            <button
-              type="button"
-              onClick={() => void handleExport("csv")}
-              disabled={exporting !== null}
-              className="rounded-lg border border-border-strong bg-surface px-3 py-1.5 text-xs font-black text-muted transition hover:bg-surface-strong disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {exporting === "csv" ? "Exporting..." : "Export CSV"}
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleExport("pdf")}
-              disabled={exporting !== null}
-              className="rounded-lg border border-indigo-400/30 bg-indigo-500/10 px-3 py-1.5 text-xs font-black text-brand transition hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {exporting === "pdf" ? "Exporting..." : "Export PDF"}
-            </button>
+            <fieldset className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-none">
+              <legend className="text-[10px] font-black uppercase tracking-widest text-subtle">
+                Export format
+              </legend>
+              <div className="grid grid-cols-2 overflow-hidden rounded-lg border border-border-strong bg-surface">
+                {(["csv", "pdf"] as const).map((format) => (
+                  <button
+                    key={format}
+                    type="button"
+                    onClick={() => void handleExport(format)}
+                    disabled={exporting !== null}
+                    aria-label={`Export ${format.toUpperCase()} report`}
+                    className={`min-w-0 px-3 py-2 text-xs font-black transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                      format === "pdf"
+                        ? "text-brand hover:bg-indigo-500/20"
+                        : "text-muted hover:bg-surface-strong"
+                    } ${exporting === format ? "bg-indigo-500/10" : ""}`}
+                  >
+                    {exporting === format ? "Exporting..." : format.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
           </div>
           {exportMessage ? (
             <p className="text-[11px] font-bold text-muted">{exportMessage}</p>

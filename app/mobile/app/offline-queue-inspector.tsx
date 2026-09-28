@@ -16,7 +16,6 @@ import { useTheme } from "../src/theme/ThemeContext";
 import { useNetworkStatus } from "../hooks/use-network-status";
 import {
   getOfflineQueue,
-  enqueueAction,
   dequeueAction,
   clearOfflineQueue,
   retryQueuedAction,
@@ -51,26 +50,6 @@ export default function OfflineQueueInspectorScreen() {
   useEffect(() => {
     loadQueue();
   }, []);
-
-  // Action helpers
-  const handleAddMock = async (type: "mock-success" | "mock-failure" | "mock-payment") => {
-    let payload = {};
-    if (type === "mock-payment") {
-      payload = {
-        amount: "50.00",
-        asset: "USDC",
-        destination: "GA5ZTHP...",
-        memo: "Lunch payment",
-      };
-    } else {
-      payload = {
-        testId: Math.random().toString(36).substring(7),
-        value: "Mock test payload info",
-      };
-    }
-    await enqueueAction(type, payload);
-    await loadQueue();
-  };
 
   const handleRetrySingle = async (id: string) => {
     setProcessingId(id);
@@ -184,28 +163,6 @@ export default function OfflineQueueInspectorScreen() {
             >
               <Ionicons name="trash-outline" size={16} color={theme.status.error} />
               <Text style={[styles.actionBtnText, { color: theme.status.error }]}>Clear Queue</Text>
-            </Pressable>
-          </View>
-        </View>
-
-        {/* Simulation Sandbox */}
-        <View style={[styles.sectionCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-          <Text style={[styles.sectionTitle, { color: theme.textPrimary }]}>Simulation Sandbox (QA)</Text>
-          <Text style={[styles.sectionSubtitle, { color: theme.textSecondary }]}>
-            Enqueue fake activities to test background sync, inspect payloads, and practice manual retry loops.
-          </Text>
-          <View style={styles.sandboxButtons}>
-            <Pressable style={[styles.sandboxBtn, { backgroundColor: theme.buttonSecondaryBg }]} onPress={() => handleAddMock("mock-success")}>
-              <Ionicons name="add-circle-outline" size={16} color={theme.textPrimary} />
-              <Text style={[styles.sandboxBtnText, { color: theme.textPrimary }]}>Mock Success</Text>
-            </Pressable>
-            <Pressable style={[styles.sandboxBtn, { backgroundColor: theme.buttonSecondaryBg }]} onPress={() => handleAddMock("mock-failure")}>
-              <Ionicons name="add-circle-outline" size={16} color={theme.textPrimary} />
-              <Text style={[styles.sandboxBtnText, { color: theme.textPrimary }]}>Mock Failure</Text>
-            </Pressable>
-            <Pressable style={[styles.sandboxBtn, { backgroundColor: theme.buttonSecondaryBg }]} onPress={() => handleAddMock("mock-payment")}>
-              <Ionicons name="add-circle-outline" size={16} color={theme.textPrimary} />
-              <Text style={[styles.sandboxBtnText, { color: theme.textPrimary }]}>Mock Payment</Text>
             </Pressable>
           </View>
         </View>

@@ -176,6 +176,11 @@ pub fn verify_and_consume(
         return Err(QuickexError::SignatureExpired);
     }
 
+    let legacy_key = NonceKey::UsedV1(signer.clone(), nonce);
+    if env.storage().persistent().has(&legacy_key) {
+        return Err(QuickexError::NonceAlreadyUsed);
+    }
+
     let key = NonceKey::Used(signer.clone(), nonce, action);
     if env.storage().persistent().has(&key) {
         return Err(QuickexError::NonceAlreadyUsed);
@@ -191,8 +196,14 @@ pub fn verify_and_consume(
 
 /// Returns `true` if `(signer, nonce, action)` has already been consumed.
 ///
-/// Useful for off-chain pre-flight checks.
+/// Legacy v1 `(signer, nonce)` records are also treated as consumed so replay
+/// protection remains effective across contract upgrades.
 pub fn is_nonce_used(env: &Env, signer: &Address, nonce: u64, action: ActionType) -> bool {
+    let legacy_key = NonceKey::UsedV1(signer.clone(), nonce);
+    if env.storage().persistent().has(&legacy_key) {
+        return true;
+    }
+
     let key = NonceKey::Used(signer.clone(), nonce, action);
     env.storage().persistent().has(&key)
 }

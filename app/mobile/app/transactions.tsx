@@ -16,6 +16,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { FlashList, type ListRenderItemInfo } from "@shopify/flash-list";
 import * as FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
+import * as Haptics from "expo-haptics";
 import { Ionicons } from "@expo/vector-icons";
 
 import TransactionItem from "../components/transaction-item";
@@ -46,6 +47,22 @@ function getAssetCode(asset: string): string {
   return colonIdx === -1 ? asset : asset.slice(0, colonIdx);
 }
 
+function getDayKey(timestamp: string): string {
+  const date = new Date(timestamp);
+  return Number.isNaN(date.getTime()) ? timestamp : date.toDateString();
+}
+
+function formatTimelineDate(timestamp: string): string {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "Unknown date";
+  return date.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
 function parseDateInput(value: string, endOfDay: boolean): number | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
@@ -70,6 +87,14 @@ function escapeCsvValue(value: string): string {
   }
   return value;
 }
+
+const triggerSelectionHaptic = () => {
+  void Haptics.selectionAsync();
+};
+
+const triggerSuccessHaptic = () => {
+  void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+};
 
 // ─── Loading Skeleton ────────────────────────────────────────────────────────
 
@@ -221,9 +246,38 @@ export default function TransactionsScreen() {
 
   const shortAccount = `${accountId.slice(0, 6)}…${accountId.slice(-4)}`;
 
-  const renderItem = ({ item }: any) => (
-    <TransactionItem item={item} accountId={accountId} />
-  );
+  const renderItem = ({
+    item,
+    index,
+  }: ListRenderItemInfo<TransactionItemType>) => {
+    const previousItem = filteredTransactions[index - 1];
+    const startsDay =
+      index === 0 ||
+      !previousItem ||
+      getDayKey(item.timestamp) !== getDayKey(previousItem.timestamp);
+
+    return (
+      <View style={styles.timelineEntry}>
+        <View style={styles.timelineRail}>
+          <View style={[styles.timelineLine, { backgroundColor: theme.border }]} />
+          <View
+            style={[
+              styles.timelineDot,
+              { backgroundColor: theme.primary, borderColor: theme.surface },
+            ]}
+          />
+        </View>
+        <View style={styles.timelineContent}>
+          {startsDay ? (
+            <Text style={[styles.timelineDate, { color: theme.textMuted }]}>
+              {formatTimelineDate(item.timestamp)}
+            </Text>
+          ) : null}
+          <TransactionItem item={item} accountId={accountId} />
+        </View>
+      </View>
+    );
+  };
 
   const handleExport = React.useCallback(async () => {
     if (filteredTransactions.length === 0) {
@@ -263,6 +317,7 @@ export default function TransactionsScreen() {
       .join("\n");
 
     try {
+      triggerSuccessHaptic();
       const fileName = `quickex-transactions-${new Date().toISOString().slice(0, 10)}.csv`;
       const cacheDirectory = fileSystemCompat.cacheDirectory ?? "";
       const fileUri = `${cacheDirectory}${fileName}`;
@@ -293,6 +348,7 @@ export default function TransactionsScreen() {
   }, [filteredTransactions]);
 
   const handleClearFilters = React.useCallback(() => {
+    triggerSelectionHaptic();
     setSearchQuery("");
     setAssetFilter("All");
     setStatusFilter("All");
@@ -368,7 +424,10 @@ export default function TransactionsScreen() {
               return (
                 <Pressable
                   key={option}
-                  onPress={() => setAssetFilter(option)}
+                  onPress={() => {
+                    triggerSelectionHaptic();
+                    setAssetFilter(option);
+                  }}
                   style={[
                     styles.chip,
                     {
@@ -407,7 +466,10 @@ export default function TransactionsScreen() {
             return (
               <Pressable
                 key={option}
-                onPress={() => setStatusFilter(option)}
+                onPress={() => {
+                  triggerSelectionHaptic();
+                  setStatusFilter(option);
+                }}
                 style={[
                   styles.chip,
                   { backgroundColor: theme.chipBg, borderColor: theme.border },
@@ -498,7 +560,10 @@ export default function TransactionsScreen() {
           <View />
         )}
         <Pressable
-          onPress={handleExport}
+          onPress={() => {
+            triggerSelectionHaptic();
+            void handleExport();
+          }}
           style={[
             styles.exportButton,
             { backgroundColor: theme.buttonPrimaryBg },
@@ -558,7 +623,10 @@ export default function TransactionsScreen() {
         ]}
       >
         <TouchableOpacity
-          onPress={() => router.back()}
+          onPress={() => {
+            triggerSelectionHaptic();
+            router.back();
+          }}
           style={styles.backBtn}
           hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
         >
@@ -770,6 +838,43 @@ const styles = StyleSheet.create({
   exportButtonText: {
     fontSize: 12,
     fontWeight: "700",
+  },
+
+  // Timeline
+  timelineEntry: {
+    flexDirection: "row",
+    paddingHorizontal: 20,
+  },
+  timelineRail: {
+    width: 24,
+    alignItems: "center",
+    position: "relative",
+  },
+  timelineLine: {
+    position: "absolute",
+    top: 0,
+    bottom: 0,
+    width: 2,
+  },
+  timelineDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 3,
+    marginTop: 22,
+    zIndex: 1,
+  },
+  timelineContent: {
+    flex: 1,
+    gap: 8,
+    paddingBottom: 12,
+  },
+  timelineDate: {
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+    marginTop: 8,
   },
 
   // Empty state

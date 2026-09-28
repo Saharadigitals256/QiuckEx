@@ -2,7 +2,12 @@
 
 import { useState } from "react";
 import { MarketplaceListing, formatCountdown, placeBid } from "@/hooks/marketplaceApi";
+import { resolvePublicKey } from "@/lib/publicKey";
+import { useFocusTrap } from "@/hooks/useFocusTrap";
 import { SigningSummary } from "./SigningSummary";
+import { detectWallets } from "@/lib/wallet/detectWallets";
+import { connectWallet, signMessage } from "@/lib/wallet/walletSigning";
+import { resolvePublicKey } from "@/lib/publicKey";
 
 type BidModalProps = {
   listing: MarketplaceListing | null;
@@ -17,6 +22,10 @@ export function BidModal({ listing, onClose, onBidSuccess }: BidModalProps) {
   const [bidState, setBidState] = useState<BidState>("idle");
   const [errorMsg, setErrorMsg] = useState("");
   const [showPreview, setShowPreview] = useState(false);
+  const modalRef = useFocusTrap<HTMLDivElement>(
+    Boolean(listing),
+    () => bidState !== "loading" && onClose(),
+  );
 
   const minBid = listing ? listing.currentBid + 1 : 1;
   const parsedAmount = parseFloat(amount);
@@ -27,7 +36,18 @@ export function BidModal({ listing, onClose, onBidSuccess }: BidModalProps) {
     setBidState("loading");
     setErrorMsg("");
 
-    const result = await placeBid(listing.username, parsedAmount);
+    const signedAt = Date.now();
+    const bidderPublicKey = resolvePublicKey();
+    const wallet = detectWallets().find((candidate) => candidate.available);
+    if (!wallet) {
+      setBidState("error");
+      setErrorMsg("Connect a Stellar wallet to authorize this bid.");
+      return;
+    }
+    const message = `quickex:marketplace:bid:${listing.id}:${bidderPublicKey}:${parsedAmount}:${signedAt}`;
+    const connectedKey = await connectWallet(wallet.id);
+    const signature = await signMessage(wallet.id, message);
+    const result = await placeBid(listing.id, parsedAmount, signature, signedAt, connectedKey);
     if (result.success) {
       setBidState("success");
       onBidSuccess(listing.username, parsedAmount);
@@ -59,7 +79,7 @@ export function BidModal({ listing, onClose, onBidSuccess }: BidModalProps) {
         {/* Glow aura */}
         <div className="absolute -inset-1 bg-gradient-to-br from-indigo-500/30 via-purple-500/20 to-transparent rounded-3xl blur-xl pointer-events-none" />
 
-        <div className="relative bg-card/90 border border-border-strong rounded-3xl p-8 shadow-2xl backdrop-blur-2xl">
+        <div ref={modalRef} role="dialog" aria-modal="true" aria-labelledby="bid-modal-title" className="relative bg-card/90 border border-border-strong rounded-3xl p-8 shadow-2xl backdrop-blur-2xl">
 
           {/* ── SUCCESS STATE ─────────────────────────────── */}
           {bidState === "success" && (
@@ -67,16 +87,16 @@ export function BidModal({ listing, onClose, onBidSuccess }: BidModalProps) {
               <div className="text-6xl animate-bounce">🎉</div>
               <h2 className="text-2xl font-black">Bid Placed!</h2>
               <p className="text-subtle">
-                You&apos;re leading with{" "}
+                Your bid of{" "}
                 <span className="text-indigo-400 font-bold">{parsedAmount} USDC</span> on{" "}
                 <span className="text-foreground font-bold">@{listing.username}</span>.
               </p>
               <div className="p-4 bg-indigo-500/10 rounded-2xl border border-indigo-500/20 text-left text-xs text-subtle font-mono">
-                <p className="font-bold text-indigo-400 mb-1">tx signed & broadcast ✓</p>
-                <p>Network: Stellar Testnet</p>
+                <p className="font-bold text-indigo-400 mb-1">Bid submitted ✓</p>
+                <p>Listing: @{listing.username}</p>
                 <p>Asset: USDC</p>
                 <p>Amount: {parsedAmount}.00 USDC</p>
-                <p>Ledger: ~2s settlement</p>
+                <p>The seller can review your offer.</p>
               </div>
               <button
                 onClick={handleClose}
@@ -96,7 +116,7 @@ export function BidModal({ listing, onClose, onBidSuccess }: BidModalProps) {
                   <p className="text-xs text-subtle uppercase tracking-widest font-bold mb-1">
                     Place a Bid
                   </p>
-                  <h2 className="text-2xl font-black tracking-tight">
+                  <h2 id="bid-modal-title" className="text-2xl font-black tracking-tight">
                     @{listing.username}
                   </h2>
                 </div>
@@ -235,7 +255,7 @@ export function BidModal({ listing, onClose, onBidSuccess }: BidModalProps) {
                         Signing...
                       </>
                     ) : (
-                      "Sign & Pay"
+                      "Submit Bid"
                     )}
                   </button>
                 </div>

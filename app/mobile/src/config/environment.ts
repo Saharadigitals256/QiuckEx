@@ -1,4 +1,4 @@
-export type EnvironmentId = 'production' | 'staging' | 'testnet' | 'branch-preview';
+export type EnvironmentId = 'production' | 'staging' | 'testnet' | 'branch-preview' | 'dev';
 
 export interface EnvironmentConfig {
   id: EnvironmentId;
@@ -35,6 +35,13 @@ export const ENVIRONMENTS: Record<EnvironmentId, EnvironmentConfig> = {
     apiUrl: 'https://preview-api.quickex.to',
     stellarNetwork: 'testnet',
     buildTag: 'preview',
+  },
+  dev: {
+    id: 'dev',
+    label: 'Development',
+    apiUrl: 'http://localhost:4000',
+    stellarNetwork: 'testnet',
+    buildTag: 'dev',
   },
 };
 

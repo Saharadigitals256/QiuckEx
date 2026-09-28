@@ -49,7 +49,13 @@ jest.mock("expo-secure-store", () => {
 jest.mock("expo-notifications", () => ({
   getPermissionsAsync: jest.fn(async () => ({ granted: true, ios: { allowsBadge: true } })),
   requestPermissionsAsync: jest.fn(async () => ({ granted: true, ios: { allowsBadge: true } })),
+  getExpoPushTokenAsync: jest.fn(async () => ({ data: "ExponentPushToken[abc123]" })),
+  registerForPushNotificationsAsync: jest.fn(async () => ({ data: "ExponentPushToken[abc123]" })),
   setBadgeCountAsync: jest.fn(async () => true),
+  setNotificationHandler: jest.fn(),
+  scheduleNotificationAsync: jest.fn(async () => "mock-id"),
+  addNotificationResponseReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+  getLastNotificationResponseAsync: jest.fn(async () => null),
 }));
 
 jest.mock("expo-background-task", () => ({
@@ -65,3 +71,24 @@ jest.mock("expo-task-manager", () => ({
   defineTask: jest.fn(),
   isTaskRegisteredAsync: jest.fn(async () => false),
 }));
+
+jest.mock("uuid", () => ({
+  v4: () => "mock-uuid-1234",
+}));
+
+jest.mock("@react-native-community/netinfo", () => ({
+  addEventListener: jest.fn(() => jest.fn()),
+  fetch: jest.fn(async () => ({
+    isConnected: true,
+    isInternetReachable: true,
+    type: "wifi",
+    details: {},
+  })),
+  useNetInfo: jest.fn(() => ({
+    isConnected: true,
+    isInternetReachable: true,
+    type: "wifi",
+  })),
+}));
+
+

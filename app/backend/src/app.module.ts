@@ -13,6 +13,7 @@ import { APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
 
 import { AppConfigModule } from "./config";
 import { AssetMetadataModule } from "./asset-metadata/asset-metadata.module";
+import { AssetListingModule } from "./asset-listing/asset-listing.module";
 import { HealthModule } from "./health/health.module";
 import { StellarModule } from "./stellar/stellar.module";
 import { SupabaseModule } from "./supabase/supabase.module";
@@ -26,6 +27,7 @@ import { PaymentsModule } from "./payments/payments.module";
 import { ReconciliationModule } from "./reconciliation/reconciliation.module";
 import { MetricsMiddleware } from "./metrics/metrics.middleware";
 import { MetricsInterceptor } from "./metrics/metrics.interceptor";
+import { BulkOperationsModule } from "./bulk-operations/bulk-operations.module";
 import { CorrelationIdMiddleware } from "./common/middleware/correlation-id.middleware";
 import { OrganizationContextMiddleware } from "./common/middleware/organization-context.middleware";
 import { ShadowTrafficMiddleware } from "./environment-parity/shadow-traffic.middleware";
@@ -44,9 +46,8 @@ import { DeveloperModule } from "./developer/developer.module";
 import { PrivacyModule } from "./privacy/privacy.module";
 import { ContractsModule } from "./contracts/contracts.module";
 import { SorobanToolingModule } from "./soroban-tooling/soroban-tooling.module";
-import { CustomThrottlerGuard } from "./auth/guards/custom-throttler.guard";
 import { OrganizationRoleGuard } from "./auth/guards/organization-role.guard";
-import { throttlerModuleProfiles } from "./config/rate-limit.config";
+import { RateLimitConfigService } from "./config/rate-limit.config";
 import { EnvironmentParityModule } from "./environment-parity/environment-parity.module";
 import { IndexerLagModule } from "./indexer-lag";
 import { SupportBundleModule } from "./support-bundle/support-bundle.module";
@@ -60,6 +61,11 @@ import { BranchPreviewModule } from "./branch-preview/branch-preview.module";
 import { RuntimeConfigModule } from "./runtime-config/runtime-config.module";
 import { TransactionTimelineModule } from "./transaction-timeline/transaction-timeline.module";
 import { DashboardFeedModule } from "./dashboard-feed/dashboard-feed.module";
+import { ContactsModule } from "./contacts/contacts.module";
+import { TeamsModule } from "./teams/teams.module";
+import { ReceiptsModule } from "./receipts/receipts.module";
+import { BulkOperationsModule } from "./bulk-operations/bulk-operations.module";
+import { SessionModule } from "./session/session.module";
 
 type AppImport =
 | Type<unknown>
@@ -77,10 +83,16 @@ EventEmitterModule.forRoot({
 wildcard: true,
 delimiter: ".",
 }),
-ThrottlerModule.forRoot(throttlerModuleProfiles),
+    BulkOperationsModule,
+  ThrottlerModule.forRootAsync({
+    inject: [RateLimitConfigService],
+    useFactory: (rateLimitConfig: RateLimitConfigService) =>
+      rateLimitConfig.getThrottlerModuleProfiles(),
+  }),
 SupabaseModule,
 HealthModule,
 AssetMetadataModule,
+AssetListingModule,
 StellarModule,
 UsernamesModule,
 MetricsModule,
@@ -92,6 +104,9 @@ PaymentsModule,
 IngestionModule,
 ApiKeysModule,
 MarketplaceModule,
+ReceiptsModule,
+ContactsModule,
+TeamsModule,
 FiatRampsModule,
 RefundsModule,
 ExportsModule,
@@ -112,6 +127,8 @@ OperationsModule,
     PreviewScopeModule,
     TransactionTimelineModule,
     DashboardFeedModule,
+    TeamsModule,
+    SessionModule,
     ];
 
     try {
@@ -141,7 +158,7 @@ return baseImports;
 providers: [
 {
 provide: APP_GUARD,
-useClass: CustomThrottlerGuard,
+useClass: RedisSlidingWindowRateLimitGuard,
 },
 {
 provide: APP_INTERCEPTOR,

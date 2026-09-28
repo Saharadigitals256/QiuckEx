@@ -245,6 +245,15 @@ export function validateBulkCsvDraftRow(row: BulkCsvDraftRow): BulkCsvDraftRow {
 
   if (!nextRow.amount || Number.isNaN(parsedAmount) || parsedAmount <= 0) {
     nextRow.errors.push('Enter a valid positive amount.');
+  } else {
+    const amountParts = nextRow.amount.split('.');
+    if (amountParts[1] && amountParts[1].length > 7) {
+      nextRow.errors.push('Amount exceeds maximum precision of 7 decimal places.');
+    }
+  }
+
+  if (nextRow.memo && new TextEncoder().encode(nextRow.memo).length > 28) {
+    nextRow.errors.push('Memo exceeds maximum Stellar limit of 28 bytes.');
   }
 
   if (!ASSET_CODE_PATTERN.test(nextRow.asset)) {
@@ -305,8 +314,16 @@ export function parseBulkInvoiceCsv(csvContent: string): BulkCsvParseResult {
         ]
       : [];
 
-  const rows = lines.slice(1).map((line, index) => {
+  const rows: BulkCsvDraftRow[] = [];
+  const rowErrors: string[] = [];
+
+  lines.slice(1).forEach((line, index) => {
     const values = parseCsvLine(line);
+    if (values.length !== headers.length) {
+      rowErrors.push(`Skipped row ${index + 2}: expected ${headers.length} columns but found ${values.length}.`);
+      return;
+    }
+
     const columns: BulkCsvColumns = {};
 
     headers.forEach((header, headerIndex) => {
@@ -316,11 +333,11 @@ export function parseBulkInvoiceCsv(csvContent: string): BulkCsvParseResult {
       columns[header] = values[headerIndex] ?? '';
     });
 
-    return toBulkCsvDraftRow(columns, index);
+    rows.push(toBulkCsvDraftRow(columns, index));
   });
 
   return {
-    fileErrors,
+    fileErrors: [...fileErrors, ...rowErrors],
     rows,
   };
 }

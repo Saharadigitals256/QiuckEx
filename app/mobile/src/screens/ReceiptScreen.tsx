@@ -9,6 +9,7 @@ import {
   StatusBar,
   Share,
   Clipboard,
+  Linking,
   ToastAndroid,
   Platform,
   LayoutAnimation,
@@ -76,6 +77,13 @@ interface ReceiptData {
   network: NetworkMetadata;
   timeline: TimelineEvent[];
   supportBundleReference?: string;
+  verification?: {
+    verified: boolean;
+    computedHash?: string;
+    verifiedAt: string;
+    degradedMode?: boolean;
+    status: 'valid' | 'invalid' | 'unverified';
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -504,12 +512,20 @@ function MetadataSection({
   contract,
   network,
   supportBundleReference,
+  verification,
 }: {
   receiptId: string;
   receiptMetadata: ReceiptMetadata;
   contract: ContractMetadata;
   network: NetworkMetadata;
   supportBundleReference?: string;
+  verification?: {
+    verified: boolean;
+    computedHash?: string;
+    verifiedAt: string;
+    degradedMode?: boolean;
+    status: 'valid' | 'invalid' | 'unverified';
+  };
 }) {
   const [expanded, setExpanded] = React.useState(false);
   const { color, tokens } = useTheme();
@@ -644,6 +660,31 @@ function MetadataSection({
                   <Text>⬆️</Text>
                 </TouchableOpacity>
               </View>
+            </View>
+          </View>
+        )}
+
+        {verification && (
+          <View style={metaStyles.hashRow}>
+            <Text style={[metaStyles.hashLabel, { color: color(tokens.textMuted) }]}>
+              Verification
+            </Text>
+            <View style={metaStyles.hashValueRow}>
+              <Text
+                style={[
+                  metaStyles.hashValue,
+                  {
+                    color: verification.verified ? '#10B981' : '#EF4444',
+                    fontWeight: '600',
+                  },
+                ]}
+              >
+                {verification.verified
+                  ? verification.degradedMode
+                    ? 'Verified (Offline Degraded)'
+                    : 'Verified by Receipts API ✓'
+                  : 'Verification Failed ✕'}
+              </Text>
             </View>
           </View>
         )}
@@ -966,7 +1007,9 @@ export function ReceiptScreen({ receipt, onBack }: { receipt: ReceiptData; onBac
 
   const handleViewExplorer = () => {
     const url = getExplorerUrl(receipt);
-    // Open URL via Linking or pass to parent
+    void Linking.openURL(url).catch(() => {
+      // The share action remains available if no browser can handle the URL.
+    });
   };
 
   const styles = themedStyles({ color, tokens, isDark });
@@ -1061,6 +1104,7 @@ export function ReceiptScreen({ receipt, onBack }: { receipt: ReceiptData; onBac
           contract={receipt.contract}
           network={receipt.network}
           supportBundleReference={receipt.supportBundleReference}
+          verification={receipt.verification}
         />
 
         {/* QR Code */}
@@ -1076,7 +1120,7 @@ export function ReceiptScreen({ receipt, onBack }: { receipt: ReceiptData; onBac
             ]}
           >
             <QRCode
-              value={`quickex.to/receipt/${receipt.id}`}
+              value={`https://quickex.to/transaction/${receipt.id}`}
               size={160}
               color={color(tokens.textPrimary)}
               backgroundColor={color(tokens.surface)}

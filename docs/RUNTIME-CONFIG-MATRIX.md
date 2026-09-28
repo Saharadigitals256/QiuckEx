@@ -21,6 +21,20 @@ How every client resolves API URLs, Stellar network settings, contract IDs, and 
 | **Build tag** | N/A | `NEXT_PUBLIC_VERCEL_GIT_COMMIT_REF` | `extra.buildTag` |
 | **Contract registry version** | N/A (serves) | `NEXT_PUBLIC_CONTRACT_REGISTRY_VERSION` | from registry endpoint |
 
+### Governance config (issues #306, #307)
+
+| Field | Backend | Frontend (Web) | Mobile |
+|---|---|---|---|
+| **Asset listing policy** | flags `assets.listing_policy`, `assets.listing_decisions` (env: development/test only) | reads `GET /stellar/verified-assets` + `GET /asset-listing/policy` | same as web |
+| **Privacy retention** | flags `privacy.deletion_requests`, `privacy.retention_sweep` (env: development/test only) | reads `GET /privacy/retention-policy` | same as web |
+| **Subject hash salt** | `PRIVACY_SUBJECT_HASH_SALT` (**required** in production; dev default otherwise) | N/A | N/A |
+| **Sweep batch size** | `PRIVACY_SWEEP_BATCH_SIZE` (default 500) | N/A | N/A |
+| **Hold overrides** | `PRIVACY_HOLD_OVERRIDES_JSON` (operator-set holds; only adds restrictions) | N/A | N/A |
+| **Intake kill switch** | `PRIVACY_DELETION_REQUESTS_ENABLED` (env guard) | N/A | N/A |
+
+Defaults are declared in `app/backend/.env.example`; the machine-readable source of truth for windows, holds and
+SLA is [policies/data/retention-schedule.json](policies/data/retention-schedule.json).
+
 ---
 
 ## 2. Source of Truth per Client
@@ -83,7 +97,7 @@ Build-time:
      │
      ├── apiUrl(env):  "https://api.quickex.to"        (production)
      │                  "https://staging-api.quickex.to"  (staging)
-     │                  EXPO_PUBLIC_API_URL ?? "http://localhost:3000"  (dev)
+    │                  EXPO_PUBLIC_API_URL ?? "http://localhost:4000"  (dev)
      │
      ├── stellarNetwork: "mainnet" (production) / "testnet" (else)
      ├── bundleIdentifier / androidPackage per env
@@ -92,12 +106,12 @@ Build-time:
 Runtime:
   src/config/environment.ts ─── hardcoded ENVIRONMENTS map (✗)
   src/config/build.ts ─── reads from Constants.expoConfig.extra with fallback:
-      ├── API_URL: extra.apiUrl ?? EXPO_PUBLIC_API_URL ?? "http://localhost:3000"
+      ├── API_URL: extra.apiUrl ?? EXPO_PUBLIC_API_URL ?? "http://localhost:4000"
       ├── STELLAR_NETWORK: extra.stellarNetwork ?? "mainnet"
       └── APP_ENVIRONMENT: extra.environment ?? "production"
 
   Services (transactions.ts, link-metadata.ts, in-app-notifications.ts):
-      Constants.expoConfig.extra.apiUrl ?? EXPO_PUBLIC_API_URL ?? "http://localhost:3000"
+      Constants.expoConfig.extra.apiUrl ?? EXPO_PUBLIC_API_URL ?? "http://localhost:4000"
 
   EnvironmentContext ─── loads persisted environment ID → ENVIRONMENTS map
   SessionContext ─── fetchSessionBootstrap(current.apiUrl)
@@ -111,7 +125,7 @@ Runtime:
 
 | Environment | Backend | Frontend | Mobile |
 |---|---|---|---|
-| **Local dev** | `http://localhost:4000` | `http://localhost:4000` | `http://localhost:3000` **✗** |
+| **Local dev** | `http://localhost:4000` | `http://localhost:4000` | `http://localhost:4000` |
 | **Preview (PR branch)** | `https://preview-api.quickex.to` | `https://preview-api.quickex.to` | `https://preview-api.quickex.to` |
 | **Staging** | `https://staging-api.quickex.to` | `https://staging-api.quickex.to` | `https://staging-api.quickex.to` |
 | **Shared testnet** | `https://testnet-api.quickex.to` | `https://testnet-api.quickex.to` | `https://testnet-api.quickex.to` |
@@ -155,8 +169,8 @@ Runtime:
 
 | # | Issue | Location | Impact | Fix |
 |---|---|---|---|---|
-| 1 | **Mobile services default to `localhost:3000`** (frontend port, not `:4000`) | `build.ts:14`, `transactions.ts:12`, `link-metadata.ts:11`, `in-app-notifications.ts:10`, `link-generator.tsx:26`, `app.config.ts:50` | Local mobile dev silently fails against local backend | Change all fallbacks to `http://localhost:4000` |
-| 2 | **`payment-confirmation.tsx` falls back to `api.quickex.com`** (`.com` vs `.to`) | `payment-confirmation.tsx:29` | Production mobile builds would hit a non-existent domain | Change to `https://api.quickex.to` or remove fallback |
+| 1 | **Mobile services default to `localhost:4000`** (backend port) | `build.ts`, `transactions.ts`, `link-metadata.ts`, `in-app-notifications.ts`, `link-generator.tsx`, `app.config.ts` | Fixed: local mobile services now target the backend by default | Keep local fallbacks aligned with the backend port |
+| 2 | **`payment-confirmation.tsx` falls back to `api.quickex.to`** | `payment-confirmation.tsx` | Fixed: production mobile builds use the canonical API domain | Keep production API host aligned with the canonical `.to` domain |
 | 3 | **Mobile contract registry calls `/api/contracts/registry`** (wrong prefix) | `contract-registry.ts:25` | Escrow registry sync 404s on payment-confirmation screen | Drop the `/api` prefix |
 | 4 | **`vercel.json` hardcodes production URLs for all deployments** | `vercel.json:7-28` | Preview deployments get production API URLs unless dashboard-overridden | Remove `env` from `vercel.json`; set in Vercel dashboard per-environment |
 
@@ -168,7 +182,7 @@ Runtime:
 | 6 | **Backend fallback defaults use `quickex.io`** (wrong TLD) | `env.schema.ts:144,148` | Unknown branches resolve to non-existent endpoints | Change to `quickex.to` |
 | 7 | **Rate limit config hardcodes testnet-specific limits** | `rate-limit.config.ts:53-57` | Environment logic is imperative (reads `process.env.NETWORK` at import time) | Make limits fully env-var-driven |
 | 8 | **Three TLDs in active use (`.to`, `.com`, `.io`)** | Multiple files | Confusion, config drift, silent failover to wrong domains | Consolidate to `.to` everywhere |
-| 9 | **Mobile `app.config.ts` dev fallback uses `localhost:3000`** | `app.config.ts:50` | Same port drift as #1 — local mobile never reaches backend out of the box | Change to `http://localhost:4000` |
+| 9 | **Mobile `app.config.ts` dev fallback uses `localhost:4000`** | `app.config.ts` | Fixed: local mobile reaches the backend out of the box | Keep the fallback on `http://localhost:4000` |
 | 10 | **Mobile `defaultEnvironment` in CI is `'production'`** | `app.config.ts:3` | CI test builds default to production API (mainnet) unless `APP_ENV` is explicitly set | Default to `'testnet'` or make configurable |
 
 ### 🟢 Informational — Monitor
@@ -206,7 +220,7 @@ Runtime:
 
 | Profile | EAS profile | `APP_ENV` | `STELLAR_NETWORK` | API URL |
 |---|---|---|---|---|
-| Dev | `eas build --profile dev` | `dev` | `testnet` | `EXPO_PUBLIC_API_URL ?? http://localhost:3000` |
+| Dev | `eas build --profile dev` | `dev` | `testnet` | `EXPO_PUBLIC_API_URL ?? http://localhost:4000` |
 | Staging | `eas build --profile staging` | `staging` | `testnet` | `https://staging-api.quickex.to` |
 | Production | `eas build --profile production` | `production` | `mainnet` | `https://api.quickex.to` |
 
@@ -237,8 +251,8 @@ AsyncStorage.getItem('@selected_environment')
 
 | Priority | Action | Tracks |
 |---|---|---|
-| P0 | Fix mobile fallback `localhost:3000` → `localhost:4000` (6 service files + `app.config.ts`) | #1, #9 |
-| P0 | Fix `payment-confirmation.tsx` `.com` → `.to` | #2 |
+| P0 | Completed: align mobile fallback with backend port `4000` (service files + `app.config.ts`) | #1, #9 |
+| P0 | Completed: fix `payment-confirmation.tsx` `.com` → `.to` | #2 |
 | P0 | Fix mobile contract registry path | #3 |
 | P0 | Remove hardcoded env from `vercel.json`; use Vercel dashboard per-environment | #4 |
 | P1 | Drive mobile environments from build-time `extra` not source-code map | #5 |

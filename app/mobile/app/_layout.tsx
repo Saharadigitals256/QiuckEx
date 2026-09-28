@@ -4,9 +4,11 @@ import {
 } from "@react-navigation/native";
 import * as Linking from "expo-linking";
 import * as Notifications from "expo-notifications";
+import * as SystemUI from "expo-system-ui";
 import { Stack, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Platform } from "react-native";
 // Ensure web build or Expo web uses the local backend during development
 if (typeof document !== "undefined" && !(globalThis as any).API_BASE_URL) {
   // Expo web typically runs on localhost; ensure the app hits the backend on port 4000
@@ -111,6 +113,11 @@ export default function RootLayout() {
  */
 function ThemeBridge() {
   const { theme, isDark } = useTheme();
+
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+    void SystemUI.setBackgroundColorAsync(theme.background).catch(() => {});
+  }, [theme.background]);
 
   const navTheme: NavigationTheme = useMemo(
     () => ({

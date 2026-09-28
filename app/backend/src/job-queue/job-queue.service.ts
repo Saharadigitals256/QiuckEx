@@ -75,8 +75,9 @@ export class JobQueueService {
   async enqueue<TPayload = unknown>(
     type: JobType,
     payload: TPayload,
+    idempotencyKey?: string,
   ): Promise<string> {
-    return this.enqueueDelayed(type, payload, new Date());
+    return this.enqueueDelayed(type, payload, new Date(), idempotencyKey);
   }
 
   /**
@@ -98,6 +99,7 @@ export class JobQueueService {
     type: JobType,
     payload: TPayload,
     scheduledAt: Date,
+    idempotencyKey?: string,
   ): Promise<string> {
     // Requirement 1.5: Reject enqueue for unregistered job types
     if (!this.registry.isRegistered(type)) {
@@ -121,12 +123,20 @@ export class JobQueueService {
     const policy = this.registry.getPolicy(type);
 
     // Requirement 2.3: Persist job with status "pending"
-    const job = await this.repository.createJob<TPayload>(
-      type,
-      payload,
-      policy.maxAttempts,
-      scheduledAt,
-    );
+    const job = idempotencyKey
+      ? await this.repository.createJob<TPayload>(
+          type,
+          payload,
+          policy.maxAttempts,
+          scheduledAt,
+          idempotencyKey,
+        )
+      : await this.repository.createJob<TPayload>(
+          type,
+          payload,
+          policy.maxAttempts,
+          scheduledAt,
+        );
 
     // Increment jobs_enqueued_total metric
     this.metrics.incrementJobsEnqueued(type);

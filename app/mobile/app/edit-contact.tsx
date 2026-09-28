@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, ScrollView } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { getContacts, updateContact } from "../services/contacts";
+import { getContacts, isValidContactAddress, updateContact } from "../services/contacts";
 import { Contact } from "../types/contact";
 import { TagSelector, ContactTag } from "../components/TagSelector";
 import { useTheme } from "../src/theme/ThemeContext";
@@ -46,6 +46,11 @@ export default function EditContactScreen() {
   async function handleSave() {
     if (!address.trim()) {
       Alert.alert("Error", "Address is required");
+      return;
+    }
+
+    if (!isValidContactAddress(address)) {
+      Alert.alert("Error", "Please enter a valid Stellar wallet address");
       return;
     }
     

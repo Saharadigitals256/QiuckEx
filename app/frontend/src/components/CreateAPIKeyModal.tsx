@@ -4,6 +4,7 @@ import {
   type NewKeyForm,
 } from "@/app/settings/developer/api-key-types";
 import React from "react";
+import { useFocusTrap } from "@/hooks/useFocusTrap";
 
 type Props = {
   setModalOpen: (state: boolean) => void;
@@ -27,6 +28,8 @@ export default function CreateAPIKeyModal({
   generateKey,
   loading,
 }: Props) {
+  const modalRef = useFocusTrap<HTMLDivElement>(true, () => !loading && setModalOpen(false));
+
   const toggleScope = (scope: ApiKeyScope) => {
     setNewKey((prev) => ({
       ...prev,
@@ -45,8 +48,8 @@ export default function CreateAPIKeyModal({
       />
 
       {/* Modal */}
-      <div className="relative w-full max-w-md bg-card border border-border-strong rounded-3xl p-8 shadow-2xl space-y-6">
-        <h3 className="text-xl font-black">Create New API Key</h3>
+      <div ref={modalRef} role="dialog" aria-modal="true" aria-labelledby="create-api-key-title" className="relative w-full max-w-md bg-card border border-border-strong rounded-3xl p-8 shadow-2xl space-y-6">
+        <h3 id="create-api-key-title" className="text-xl font-black">Create New API Key</h3>
 
         {/* Key name */}
         <div className="space-y-2">

@@ -26,6 +26,8 @@ package-json.lock
 # Tests
 /coverage
 /.nyc_output
+release-scorecard.json
+release-scorecard.md
 
 # IDEs and editors
 /.idea

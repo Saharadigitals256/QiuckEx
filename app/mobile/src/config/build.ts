@@ -11,5 +11,5 @@ export const APP_ENVIRONMENT = String(extra.environment ?? 'production');
 export const STELLAR_NETWORK = String(extra.stellarNetwork ?? 'mainnet');
 export const BUILD_METADATA = `${APP_VERSION}+${BUILD_NUMBER}`;
 export const API_URL = String(
-  extra.apiUrl ?? process.env['EXPO_PUBLIC_API_URL'] ?? 'http://localhost:3000'
+  extra.apiUrl ?? process.env['EXPO_PUBLIC_API_URL'] ?? 'http://localhost:4000'
 );

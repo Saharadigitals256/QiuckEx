@@ -1,0 +1,91 @@
+name: Architecture decision record
+description: Propose or record a significant architectural decision.
+title: "[ADR]: "
+labels: ["needs:design", "status:needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for decisions that are expensive to reverse: data
+        ownership, settlement flow, key custody, network selection, or a change
+        to the documented API contract.
+
+        Accepted ADRs live in `docs/adr/` and are numbered sequentially. A PR
+        that adds one should also reference it from the PR description.
+
+  - type: input
+    id: number
+    attributes:
+      label: ADR number
+      description: Next unused number in `docs/adr/`.
+      placeholder: "0007"
+    validations:
+      required: true
+
+  - type: input
+    id: title
+    attributes:
+      label: Title
+      placeholder: Use a decision, not a topic — "Payments settle on the backend", not "Payments"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: status
+    attributes:
+      label: Status
+      options:
+        - Proposed
+        - Accepted
+        - Superseded by another ADR
+        - Deprecated
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surfaces affected
+      multiple: true
+      options:
+        - app/frontend
+        - app/backend
+        - app/mobile
+        - app/contract
+        - CI / infrastructure
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What forces are in play? What constraints cannot change (self-custody, INV-01..INV-10, Stellar account model)?
+    validations:
+      required: true
+
+  - type: textarea
+    id: decision
+    attributes:
+      label: Decision
+      description: What is being decided, stated in the present tense.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What was rejected, and specifically why.
+    validations:
+      required: true
+
+  - type: textarea
+    id: consequences
+    attributes:
+      label: Consequences
+      description: |
+        Include: what becomes easier, what becomes harder, migration and rollback
+        path, and which docs need updating (CAPABILITY-MAP, BACKEND-CLIENT-CONTRACT-MAP, INVARIANTS).
+    validations:
+      required: true

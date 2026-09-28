@@ -39,6 +39,7 @@ pub enum EntryPoint {
     SetPrivacy = 13,
     CleanupEscrow = 14,
     ExtendEscrowTtl = 15,
+    ExtendEscrowExpiry = 16,
 }
 
 impl EntryPoint {
@@ -58,7 +59,8 @@ impl EntryPoint {
             | EntryPoint::VoteForDispute
             | EntryPoint::ResolveDisputeMultiSig
             | EntryPoint::CleanupEscrow
-            | EntryPoint::ExtendEscrowTtl => None,
+            | EntryPoint::ExtendEscrowTtl
+            | EntryPoint::ExtendEscrowExpiry => None,
         }
     }
 
@@ -71,6 +73,7 @@ impl EntryPoint {
                 | EntryPoint::StealthWithdraw
                 | EntryPoint::CleanupEscrow
                 | EntryPoint::ExtendEscrowTtl
+                | EntryPoint::ExtendEscrowExpiry
         )
     }
 }

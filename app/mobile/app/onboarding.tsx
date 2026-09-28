@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import OnboardingFlow from '../components/onboarding/OnboardingFlow';
 import { useOnboarding } from '../hooks/useOnboarding';
@@ -23,14 +24,21 @@ export default function OnboardingScreen() {
   };
 
   const handleSkip = () => {
-    trackOnboardingEvent('onboarding_skipped', {
-      timestamp: Date.now(),
-    });
-    router.replace('/');
+    void (async () => {
+      await markOnboardingComplete();
+      await trackOnboardingEvent('onboarding_skipped', {
+        timestamp: Date.now(),
+      });
+      router.replace('/');
+    })();
   };
 
   if (isLoading) {
-    return null; // Or show a loading spinner
+    return (
+      <View style={styles.loading}>
+        <ActivityIndicator />
+      </View>
+    );
   }
 
   // If already completed, redirect to home
@@ -46,3 +54,11 @@ export default function OnboardingScreen() {
     />
   );
 }
+
+const styles = StyleSheet.create({
+  loading: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+});

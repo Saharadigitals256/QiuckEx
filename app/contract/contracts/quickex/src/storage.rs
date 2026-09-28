@@ -50,8 +50,8 @@ use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env, Map, Vec};
 use soroban_sdk::xdr::ToXdr;
 
 use crate::types::{
-    CachedOraclePrice, DisputeVote, EscrowEntry, FeeConfig, GovernanceConfig,
-    GovernanceProposal, Role, StealthEscrowEntry,
+    CachedOraclePrice, DisputeVote, EscrowEntry, FeeConfig, Role, StealthEscrowEntry,
+    TtlExtensionFeeConfig,
 };
 
 /// Record type for TTL policy selection.
@@ -148,6 +148,8 @@ pub enum DataKey {
     EscrowDispute(Bytes),
     /// Global escrow counter (singleton).
     EscrowCounter,
+    /// TTL extension fee config (singleton).
+    TtlExtensionFeeConfig,
     /// Current contract schema version (singleton).
     ContractVersion,
     /// Admin address (singleton).
@@ -204,22 +206,30 @@ pub enum DataKey {
     FeeCollectorIndex,
     /// Fee collector address at a given rotation index (Fee Router v2).
     FeeCollector(u32),
+    /// Timestamp of the last fee collector rotation for cooldown enforcement (singleton).
+    FeeCollectorLastRotation,
+    /// Rotation history entries (append-only Vec tracking all rotations).
+    FeeCollectorRotationHistory,
     /// Tracks arbiter votes for disputed escrows. Keyed by (commitment, arbiter).
     DisputeVote(Bytes, Address),
     /// Tracks whether a hook contract is on the allowlist.
     HookAllowlist(Address),
-    /// Active M-of-N contract governance configuration.
-    GovernanceConfig,
-    /// Governance proposal keyed by its monotonic id.
-    GovernanceProposal(u64),
-    /// Monotonic governance proposal id counter.
-    GovernanceProposalCounter,
-    /// True only while an approved governance action is being applied.
-    GovernanceExecution,
-    /// Expected schema version for an approved WASM upgrade awaiting migration.
-    PendingUpgradeVersion,
-    /// Instance-level latch: once true, governance can never fall back to legacy admin mode.
-    GovernanceActivated,
+    /// Escrow extension record tracking TTL renewals. Keyed by commitment.
+    EscrowExtension(Bytes),
+    /// Dispute evidence record. Keyed by (commitment, evidence_hash).
+    DisputeEvidence(Bytes, BytesN<32>),
+    /// Multi-signature admin signer set (singleton).
+    AdminSigners,
+    /// Number of required admin signatures (singleton).
+    AdminThreshold,
+    /// Current multi-signature approval round (singleton).
+    AdminApprovalRound,
+    /// Number of approvals in the current round (singleton).
+    AdminApprovalCount,
+    /// Whether the current approval round has reached quorum (singleton).
+    AdminApprovalReady,
+    /// Round in which an address last approved an admin action.
+    AdminSignerApprovalRound(Address),
 }
 
 /// Compact escrow record stored on the hot path.
@@ -251,7 +261,7 @@ impl CompactEscrowEntry {
         }
     }
 
-    fn into_public(self, dispute: EscrowDisputeConfig) -> EscrowEntry {
+    fn into_public(self, env: &Env, dispute: EscrowDisputeConfig) -> EscrowEntry {
         EscrowEntry {
             token: self.token,
             amount_due: self.amount_due,
@@ -263,6 +273,8 @@ impl CompactEscrowEntry {
             arbiter: dispute.arbiter,
             arbiters: dispute.arbiters,
             arbiter_threshold: dispute.arbiter_threshold,
+            memo: None,
+            milestones: Vec::new(env),
         }
     }
 }
@@ -390,10 +402,9 @@ pub fn is_emergency_mode(env: &Env) -> bool {
 /// Set the upgrade window: [start, end] in ledger seconds (epoch).
 /// - `start`: ledger timestamp when upgrades are allowed to begin. 0 = unset.
 /// - `end`: ledger timestamp after which upgrades are blocked. 0 = no upper bound.
-pub fn set_upgrade_window(env: &Env, start: u64, end: u64) {
+pub fn set_upgrade_window(env: &Env, start: u64, end: u64) -> Result<(), crate::errors::QuickexError> {
     if end != 0 && end <= start {
-        // Invalid window; silently ignore or could panic depending on caller behavior
-        return;
+        return Err(crate::errors::QuickexError::InvalidAmount);
     }
     env.storage()
         .persistent()
@@ -401,6 +412,7 @@ pub fn set_upgrade_window(env: &Env, start: u64, end: u64) {
     env.storage()
         .persistent()
         .set(&DataKey::UpgradeWindowEnd, &end);
+    Ok(())
 }
 
 /// Get the current upgrade window.
@@ -651,7 +663,7 @@ pub fn get_escrow(env: &Env, commitment: &Bytes) -> Option<EscrowEntry> {
     if let Some(compact_entry) = compact_result {
         set_or_extend_ttl(env, &compact_key, RecordType::Escrow);
         let dispute = get_escrow_dispute_config(env, commitment);
-        return Some(compact_entry.into_public(dispute));
+        return Some(compact_entry.into_public(env, dispute));
     }
 
     let legacy_key = legacy_escrow_key(commitment);
@@ -777,6 +789,79 @@ pub fn get_admin(env: &Env) -> Option<Address> {
     env.storage().persistent().get(&key)
 }
 
+pub fn set_admin_signers(env: &Env, signers: &Vec<Address>) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::AdminSigners, signers);
+}
+
+pub fn get_admin_signers(env: &Env) -> Option<Vec<Address>> {
+    env.storage().persistent().get(&DataKey::AdminSigners)
+}
+
+pub fn set_admin_threshold(env: &Env, threshold: u32) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::AdminThreshold, &threshold);
+}
+
+pub fn get_admin_threshold(env: &Env) -> Option<u32> {
+    env.storage().persistent().get(&DataKey::AdminThreshold)
+}
+
+pub fn get_admin_approval_round(env: &Env) -> u32 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::AdminApprovalRound)
+        .unwrap_or(0)
+}
+
+pub fn set_admin_approval_round(env: &Env, round: u32) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::AdminApprovalRound, &round);
+}
+
+pub fn get_admin_approval_count(env: &Env) -> u32 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::AdminApprovalCount)
+        .unwrap_or(0)
+}
+
+pub fn set_admin_approval_count(env: &Env, count: u32) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::AdminApprovalCount, &count);
+}
+
+pub fn is_admin_approval_ready(env: &Env) -> bool {
+    env.storage()
+        .persistent()
+        .get(&DataKey::AdminApprovalReady)
+        .unwrap_or(false)
+}
+
+pub fn set_admin_approval_ready(env: &Env, ready: bool) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::AdminApprovalReady, &ready);
+}
+
+pub fn get_signer_approval_round(env: &Env, signer: &Address) -> u32 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::AdminSignerApprovalRound(signer.clone()))
+        .unwrap_or(u32::MAX)
+}
+
+pub fn set_signer_approval_round(env: &Env, signer: &Address, round: u32) {
+    env.storage().persistent().set(
+        &DataKey::AdminSignerApprovalRound(signer.clone()),
+        &round,
+    );
+}
+
 // -----------------------------------------------------------------------------
 // TTL Helper
 // -----------------------------------------------------------------------------
@@ -864,6 +949,15 @@ pub fn get_feature_pause_reason(env: &Env, flag: PauseFlag) -> u32 {
     reasons.get(flag as u32).unwrap_or(0u32)
 }
 
+/// Get the current pause status including global and per-feature pauses.
+pub fn get_pause_status(env: &Env) -> crate::types::PauseStatus {
+    crate::types::PauseStatus {
+        is_globally_paused: is_paused(env),
+        global_pause_reason: get_global_pause_reason(env),
+        feature_pause_flags: get_pause_flags(env),
+    }
+}
+
 /// Get paused state.
 #[allow(dead_code)]
 pub fn is_paused(env: &Env) -> bool {
@@ -928,6 +1022,25 @@ pub fn get_fee_config(env: &Env) -> FeeConfig {
 
 pub fn set_fee_config(env: &Env, config: &FeeConfig) {
     let key = DataKey::FeeConfig;
+    env.storage().persistent().set(&key, config);
+    set_or_extend_ttl(env, &key, RecordType::FeeConfig);
+}
+
+pub fn get_ttl_extension_fee_config(env: &Env) -> TtlExtensionFeeConfig {
+    let key = DataKey::TtlExtensionFeeConfig;
+    let result = env.storage().persistent().get(&key);
+    if result.is_some() {
+        set_or_extend_ttl(env, &key, RecordType::FeeConfig);
+    }
+    result.unwrap_or(TtlExtensionFeeConfig {
+        fee_per_second: 0,
+        min_fee: 0,
+        max_fee: 0,
+    })
+}
+
+pub fn set_ttl_extension_fee_config(env: &Env, config: &TtlExtensionFeeConfig) {
+    let key = DataKey::TtlExtensionFeeConfig;
     env.storage().persistent().set(&key, config);
     set_or_extend_ttl(env, &key, RecordType::FeeConfig);
 }
@@ -1092,6 +1205,50 @@ pub fn set_fee_collector_at(env: &Env, index: u32, collector: &Address) {
         .set(&DataKey::FeeCollector(index), collector);
 }
 
+/// Get the timestamp of the last fee collector rotation (for cooldown enforcement).
+pub fn get_fee_collector_last_rotation(env: &Env) -> u64 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::FeeCollectorLastRotation)
+        .unwrap_or(0u64)
+}
+
+/// Set the timestamp of the last fee collector rotation.
+pub fn set_fee_collector_last_rotation(env: &Env, timestamp: u64) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::FeeCollectorLastRotation, &timestamp);
+}
+
+/// Get the rotation history (all rotations that have occurred).
+pub fn get_fee_collector_rotation_history(
+    env: &Env,
+) -> Vec<crate::types::FeeCollectorRotationEntry> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::FeeCollectorRotationHistory)
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+/// Add a rotation entry to the history.
+pub fn add_fee_collector_rotation_entry(
+    env: &Env,
+    entry: &crate::types::FeeCollectorRotationEntry,
+) {
+    let mut history = get_fee_collector_rotation_history(env);
+    history.push_back(entry.clone());
+    env.storage()
+        .persistent()
+        .set(&DataKey::FeeCollectorRotationHistory, &history);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Cooldown enforcement constant
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Minimum seconds between fee collector rotations (24 hours).
+pub const FEE_COLLECTOR_ROTATION_COOLDOWN_SECS: u64 = 86400;
+
 // -----------------------------------------------------------------------------
 // Escrow-id map helpers (Issue #304)
 // -----------------------------------------------------------------------------
@@ -1148,4 +1305,52 @@ pub fn count_dispute_votes(env: &Env, commitment: &Bytes, arbiters: &Vec<Address
         }
     }
     count
+}
+
+// ---- Escrow extension helpers (Issue #113) ----
+
+/// Get an escrow's extension record if it exists.
+pub fn get_escrow_extension(env: &Env, commitment: &Bytes) -> Option<crate::types::EscrowExtension> {
+    let key = DataKey::EscrowExtension(commitment.clone());
+    env.storage().persistent().get(&key)
+}
+
+/// Store or update an escrow's extension record.
+pub fn put_escrow_extension(
+    env: &Env,
+    commitment: &Bytes,
+    extension: &crate::types::EscrowExtension,
+) {
+    let key = DataKey::EscrowExtension(commitment.clone());
+    env.storage().persistent().set(&key, extension);
+    set_or_extend_ttl(env, &key, RecordType::EscrowDispute);
+}
+
+// ---- Dispute evidence helpers (Issue #115) ----
+
+/// Get dispute evidence for a given commitment and evidence hash.
+pub fn get_dispute_evidence(
+    env: &Env,
+    commitment: &Bytes,
+    evidence_hash: &BytesN<32>,
+) -> Option<crate::types::DisputeEvidence> {
+    let key = DataKey::DisputeEvidence(commitment.clone(), evidence_hash.clone());
+    env.storage().persistent().get(&key)
+}
+
+/// Store dispute evidence.
+pub fn put_dispute_evidence(
+    env: &Env,
+    commitment: &Bytes,
+    evidence: &crate::types::DisputeEvidence,
+) {
+    let key = DataKey::DisputeEvidence(commitment.clone(), evidence.evidence_hash.clone());
+    env.storage().persistent().set(&key, evidence);
+    set_or_extend_ttl(env, &key, RecordType::EscrowDispute);
+}
+
+/// Check if evidence exists for an escrow.
+pub fn has_dispute_evidence(env: &Env, commitment: &Bytes, evidence_hash: &BytesN<32>) -> bool {
+    let key = DataKey::DisputeEvidence(commitment.clone(), evidence_hash.clone());
+    env.storage().persistent().has(&key)
 }

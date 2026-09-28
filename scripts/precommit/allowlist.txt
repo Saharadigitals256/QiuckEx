@@ -1,0 +1,54 @@
+# Pre-commit allowlist
+#
+# Reviewed exceptions to scripts/precommit/check.mjs. Each entry is an explicit,
+# justified decision — the same discipline as .secrets.baseline, and reviewed
+# like code.
+#
+# Format: one entry per line, `<glob> | <reason>`. Blank lines and lines
+# starting with `#` are ignored.
+
+# ── Secret-detection fixtures ───────────────────────────────────────────────
+# The crash-reporting redaction service needs a string shaped like a Stellar
+# secret key in order to prove it redacts one. `SBZVMB74Z7…` is a well-known
+# dummy value used for exactly this purpose across the Stellar ecosystem; it is
+# not a funded or reachable account, and no key material is derived from it here.
+# These files are test fixtures and documentation showing what a leak looks like,
+# so the pattern is the subject under test rather than a finding.
+app/backend/src/crash-reporting/redaction.service.unit.spec.ts | Stellar secret-key fixture for the redaction service unit test
+app/backend/src/crash-reporting/crash-reporting.int.spec.ts | Stellar secret-key fixture for the redaction integration test
+app/backend/src/crash-reporting/QUICK_START.md | Documentation showing a redacted secret key in an example
+app/backend/src/crash-reporting/DEPLOYMENT_CHECKLIST.md | Documentation showing the grep command used to find a leaked key
+
+# ── Deliberate exceptions ───────────────────────────────────────────────────
+# The pnpm workspace requires a committed .npmrc (hoisting and workspace linking
+# are load-bearing for this monorepo). The committed file carries only those
+# three settings and no registry credentials; the rule stays in force so that a
+# future .npmrc carrying an _authToken is still caught.
+.npmrc | Required pnpm workspace config (hoist + link-workspace-packages); contains no registry credentials
+
+# ── Committed build output, pending removal ─────────────────────────────────
+# These predate the ignore rules and are still tracked. They are removed by the
+# change that introduces this check; the entries below exist only so the check
+# can run on the whole tree in the interim without drowning real findings.
+.turbo/cache/6759ecad4645ad2d-manifest.json | Turbo cache, tracked before .turbo was ignored
+.turbo/cache/6759ecad4645ad2d-meta.json | Turbo cache, tracked before .turbo was ignored
+.turbo/cache/6759ecad4645ad2d.tar.zst | Turbo cache, tracked before .turbo was ignored
+.turbo/cache/ccb3e596ede7a1b1-manifest.json | Turbo cache, tracked before .turbo was ignored
+.turbo/cache/d0caf71221f688c8-manifest.json | Turbo cache, tracked before .turbo was ignored
+.turbo/cache/d0caf71221f688c8-meta.json | Turbo cache, tracked before .turbo was ignored
+.turbo/cache/d0caf71221f688c8.tar.zst | Turbo cache, tracked before .turbo was ignored
+.turbo/cache/e377a712b8c79681-manifest.json | Turbo cache, tracked before .turbo was ignored
+.turbo/cache/e377a712b8c79681-meta.json | Turbo cache, tracked before .turbo was ignored
+.turbo/cache/e377a712b8c79681.tar.zst | Turbo cache, tracked before .turbo was ignored
+.turbo/cache/e8a3b56ccd965ad6-manifest.json | Turbo cache, tracked before .turbo was ignored
+.turbo/cache/e8a3b56ccd965ad6-meta.json | Turbo cache, tracked before .turbo was ignored
+.turbo/cache/e8a3b56ccd965ad6.tar.zst | Turbo cache, tracked before .turbo was ignored
+.turbo/daemon/5f3254d4cfe9cbab-turbo.log.2026-03-25 | Turbo daemon log, tracked before .turbo was ignored
+app/backend/.turbo/daemon/5d4fe12ee3dd75ac-turbo.log.2026-01-20 | Turbo daemon log, tracked before .turbo was ignored
+
+# ── Oversized files ─────────────────────────────────────────────────────────
+# The Node toolchain archive and the screenshot snapshot baseline are both
+# intentionally large and intentionally committed; they are inputs, not output.
+node.tar.xz | Vendored Node toolchain archive used by the devcontainer image
+app/mobile/__tests__/__snapshots__/receipt-screenshots.test.tsx.snap | Committed screenshot-regression baseline
+app/backend/tsconfig.build.tsbuildinfo | TypeScript incremental build info, tracked before it was ignored

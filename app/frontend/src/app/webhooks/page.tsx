@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { getQuickexApiBase } from '@/lib/api';
+import { useFocusTrap } from '@/hooks/useFocusTrap';
 
 type WebhookStatus = 'active' | 'disabled';
 type DeliveryStatus = 'sent' | 'failed' | 'pending' | 'dlq' | 'success' | 'failure' | string;
@@ -111,6 +112,14 @@ type WebhookApiResponse = {
 };
 
 type DeliveryLogApiResponse = Omit<DeliveryLog, 'webhookId' | 'endpointUrl'>;
+type SampleEventType = 'link.created' | 'payment.received' | 'payment.settled' | 'payment.failed';
+
+const SAMPLE_EVENT_TYPES: { value: SampleEventType; label: string }[] = [
+  { value: 'payment.received', label: 'Payment received' },
+  { value: 'link.created', label: 'Link created' },
+  { value: 'payment.settled', label: 'Payment settled' },
+  { value: 'payment.failed', label: 'Payment failed' },
+];
 
 const EVENT_TYPES = [
   'EscrowDeposited',
@@ -356,8 +365,12 @@ export default function WebhooksPage() {
   const [endpointFilter, setEndpointFilter] = useState('all');
   const [newWebhookUrl, setNewWebhookUrl] = useState('');
   const [newWebhookEvents, setNewWebhookEvents] = useState<string[]>(['payment.received']);
+  const [sampleEventType, setSampleEventType] = useState<SampleEventType>('payment.received');
+  const [includeSampleSignature, setIncludeSampleSignature] = useState(true);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isDetailDrawerOpen, setIsDetailDrawerOpen] = useState(false);
+  const createModalRef = useFocusTrap<HTMLDivElement>(isCreateModalOpen, () => setIsCreateModalOpen(false));
+  const detailDrawerRef = useFocusTrap<HTMLDivElement>(isDetailDrawerOpen, () => setIsDetailDrawerOpen(false));
 
   useEffect(() => {
     setPublicKey(resolveInitialPublicKey());
@@ -561,9 +574,15 @@ export default function WebhooksPage() {
     setError(null);
     try {
       const result = await apiFetch<TestWebhookResponse>(
-        `/developer/webhooks/${encodeURIComponent(webhook.id)}/test`,
+        `/developer/webhooks/${encodeURIComponent(webhook.id)}/sample-events`,
         apiKey,
-        { method: 'POST' },
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            event_type: sampleEventType,
+            include_signature: includeSampleSignature,
+          }),
+        },
       );
       const syntheticLog: DeliveryLog = {
         id: `test_${result.event_id}`,
@@ -582,7 +601,7 @@ export default function WebhooksPage() {
       setDeliveries((prev) => [syntheticLog, ...prev]);
       setSelectedWebhookId(webhook.id);
       setSelectedDeliveryId(syntheticLog.id);
-      setNotice(`Test delivery ${result.success ? 'succeeded' : 'failed'} in ${result.latency_ms}ms. Signature header was ${result.signature_included ? 'included' : 'omitted'}.`);
+      setNotice(`${result.event_type} test delivery ${result.success ? 'succeeded' : 'failed'} in ${result.latency_ms}ms. Signature header was ${result.signature_included ? 'included' : 'omitted'}.`);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -968,14 +987,43 @@ export default function WebhooksPage() {
                         {(selectedWebhook.events ?? ['all events']).map((event) => <span key={event} className="rounded-full bg-brand-soft px-2 py-1 text-xs text-brand">{event}</span>)}
                       </div>
                     </div>
-                    <button
-                      onClick={() => handleTestWebhook(selectedWebhook)}
-                      disabled={actionLoading === `test:${selectedWebhook.id}` || selectedWebhook.id.startsWith('wh_sample')}
-                      className="w-full rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {actionLoading === `test:${selectedWebhook.id}` ? 'Sending test…' : 'Send signed test event'}
-                    </button>
-                    <p className="text-xs text-subtle">Test events use backend developer support when available and may require an admin-scoped API key.</p>
+                    <div className="rounded-2xl border border-border bg-surface p-4">
+                      <div className="mb-3">
+                        <h3 className="font-semibold">Send a test event</h3>
+                        <p className="mt-1 text-xs text-subtle">Send a canonical sample payload to verify your receiver.</p>
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+                        <label className="space-y-1">
+                          <span className="text-xs font-semibold uppercase tracking-wide text-subtle">Event type</span>
+                          <select
+                            value={sampleEventType}
+                            onChange={(event) => setSampleEventType(event.target.value as SampleEventType)}
+                            className="w-full rounded-xl border border-border-strong bg-background px-3 py-2 text-sm text-muted"
+                          >
+                            {SAMPLE_EVENT_TYPES.map((eventType) => (
+                              <option key={eventType.value} value={eventType.value}>{eventType.label}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="flex items-end gap-2 pb-2 text-sm text-muted">
+                          <input
+                            type="checkbox"
+                            checked={includeSampleSignature}
+                            onChange={(event) => setIncludeSampleSignature(event.target.checked)}
+                            className="h-4 w-4 accent-blue-600"
+                          />
+                          Include signature
+                        </label>
+                      </div>
+                      <button
+                        onClick={() => handleTestWebhook(selectedWebhook)}
+                        disabled={actionLoading === `test:${selectedWebhook.id}` || selectedWebhook.id.startsWith('wh_sample')}
+                        className="mt-3 w-full rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {actionLoading === `test:${selectedWebhook.id}` ? 'Sending test…' : 'Send test event'}
+                      </button>
+                      <p className="mt-2 text-xs text-subtle">Requires an admin-scoped API key for live endpoints.</p>
+                    </div>
                   </div>
                 ) : (
                   <p className="mt-4 text-sm text-subtle">Select an endpoint to view configuration.</p>
@@ -1006,9 +1054,9 @@ export default function WebhooksPage() {
 
       {isCreateModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-lg overflow-hidden rounded-3xl border border-border bg-card shadow-xl">
+          <div ref={createModalRef} role="dialog" aria-modal="true" aria-labelledby="create-webhook-title" className="w-full max-w-lg overflow-hidden rounded-3xl border border-border bg-card shadow-xl">
             <div className="flex items-center justify-between border-b border-border p-5">
-              <h2 className="text-lg font-bold">Create webhook endpoint</h2>
+              <h2 id="create-webhook-title" className="text-lg font-bold">Create webhook endpoint</h2>
               <button onClick={() => setIsCreateModalOpen(false)} className="text-subtle hover:text-muted" aria-label="Close create webhook modal">✕</button>
             </div>
             <form onSubmit={handleCreateWebhook}>
@@ -1057,7 +1105,7 @@ export default function WebhooksPage() {
 
       {isDetailDrawerOpen && selectedDelivery && (
         <div className="fixed inset-0 z-50 flex justify-end bg-background/80 backdrop-blur-md transition-opacity">
-          <div className="flex h-full w-full max-w-2xl flex-col border-l border-border bg-card shadow-2xl overflow-y-auto">
+          <div ref={detailDrawerRef} role="dialog" aria-modal="true" aria-labelledby="delivery-detail-title" className="flex h-full w-full max-w-2xl flex-col border-l border-border bg-card shadow-2xl overflow-y-auto">
             {/* Drawer Header */}
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-card/95 px-6 py-5 backdrop-blur">
               <div>
@@ -1067,7 +1115,7 @@ export default function WebhooksPage() {
                   </span>
                   <span className="font-mono text-xs text-subtle">{selectedDelivery.eventId}</span>
                 </div>
-                <h2 className="mt-1.5 text-xl font-bold text-foreground">{selectedDelivery.eventType}</h2>
+                <h2 id="delivery-detail-title" className="mt-1.5 text-xl font-bold text-foreground">{selectedDelivery.eventType}</h2>
               </div>
               <div className="flex items-center gap-2">
                 <button

@@ -1313,6 +1313,43 @@ paths:
               schema:
                 $ref: "#/components/schemas/NotificationPreference"
 
+  /notifications/preferences:
+    get:
+      tags: [Notifications]
+      operationId: getCurrentPreferences
+      summary: Get notification preferences for the authenticated user
+      responses:
+        "200":
+          description: Current notification preferences
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NotificationPreference"
+
+    patch:
+      tags: [Notifications]
+      operationId: updateCurrentPreferences
+      summary: Update notification preferences for the authenticated user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateNotificationPreferences"
+      responses:
+        "200":
+          description: Updated notification preferences
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NotificationPreference"
+        "400":
+          description: At least one channel must remain enabled
+
   /notifications/preferences/{publicKey}/{channel}:
     delete:
       tags: [Notifications]
@@ -1329,7 +1366,7 @@ paths:
           required: true
           schema:
             type: string
-            enum: [email, push, webhook]
+            enum: [email, telegram, push, webhook]
       responses:
         "204":
           description: Channel disabled
@@ -1615,9 +1652,34 @@ paths:
           in: query
           schema:
             type: string
+        - name: anchorDomain
+          in: query
+          description: Optional configured anchor domain; otherwise configured anchors are discovered.
+          schema:
+            type: string
       responses:
         "200":
           description: Available anchors
+
+  /fiat-ramps/sep10/challenge:
+    get:
+      tags: [fiat-ramps]
+      operationId: getSep10Challenge
+      summary: Fetch a SEP-10 transaction challenge for client-side signing
+      parameters:
+        - name: anchorDomain
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: userAccount
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Anchor-issued SEP-10 challenge transaction
 
   /fiat-ramps/deposit:
     post:
@@ -1655,8 +1717,33 @@ paths:
       operationId: handleKycCallback
       summary: Handle KYC redirects
       responses:
-        "200":
-          description: Callback processed
+        "503":
+          description: Callbacks are disabled; use SEP-12 status polling
+
+  /fiat-ramps/kyc/status:
+    post:
+      tags: [fiat-ramps]
+      operationId: getKycStatus
+      summary: Fetch normalized customer KYC status using SEP-10 authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [anchorDomain, userAccount, signedChallenge]
+              properties:
+                anchorDomain:
+                  type: string
+                userAccount:
+                  type: string
+                signedChallenge:
+                  type: string
+                customerId:
+                  type: string
+      responses:
+        "201":
+          description: Normalized SEP-12 KYC status
 
   /fiat-ramps/transaction/status:
     post:
@@ -1664,8 +1751,8 @@ paths:
       operationId: updateTransactionStatus
       summary: Handle transaction status updates
       responses:
-        "200":
-          description: Status updated
+        "503":
+          description: Callbacks are disabled; query SEP-24 transaction status from the anchor
 
   # ---------------------------------------------------------------------------
   # Admin / Refunds
@@ -2855,6 +2942,9 @@ components:
           type: string
         destination:
           type: string
+        payerPublicKey:
+          type: string
+          description: Optional Stellar public key for payer notification delivery.
         frequency:
           $ref: "#/components/schemas/FrequencyType"
         startDate:
@@ -2904,6 +2994,8 @@ components:
         username:
           type: string
         destination:
+          type: string
+        payerPublicKey:
           type: string
         amount:
           type: number
@@ -2962,7 +3054,7 @@ components:
           type: string
         status:
           type: string
-          enum: [pending, success, failed, skipped]
+          enum: [pending, processing, success, failed, skipped]
         transactionHash:
           type: string
         failureReason:
@@ -3386,7 +3478,7 @@ components:
           type: string
         channel:
           type: string
-          enum: [email, push, webhook]
+          enum: [email, telegram, push, webhook]
         email:
           type: string
         pushToken:
@@ -3411,7 +3503,7 @@ components:
       properties:
         channel:
           type: string
-          enum: [email, push, webhook]
+          enum: [email, telegram, push, webhook]
         email:
           type: string
         pushToken:
@@ -3429,6 +3521,15 @@ components:
           type: number
         enabled:
           type: boolean
+
+    UpdateNotificationPreferences:
+      type: object
+      required: [preferences]
+      properties:
+        preferences:
+          type: array
+          items:
+            $ref: "#/components/schemas/UpsertNotificationPreference"
 
     # --- Marketplace ---
     ListUsernameRequest:
@@ -3510,15 +3611,25 @@ components:
     # --- Fiat Ramps ---
     FiatRampRequest:
       type: object
-      required: [assetCode, amount, userAccount, anchorDomain]
+      required: [assetCode, amount, userAccount, anchorDomain, signedChallenge]
       properties:
         assetCode:
           type: string
         amount:
-          type: number
+          oneOf:
+            - type: number
+            - type: string
+          description: Positive amount, preferably a decimal string to preserve precision.
         userAccount:
           type: string
         anchorDomain:
+          type: string
+        signedChallenge:
+          type: string
+          description: SEP-10 challenge XDR signed by the account's wallet; the backend never receives a secret key.
+        countryCode:
+          type: string
+        lang:
           type: string
 
     # --- Refunds ---

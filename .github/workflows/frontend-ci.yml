@@ -46,6 +46,10 @@ jobs:
         working-directory: ./app/frontend
         run: npm test || npx vitest run
 
+      - name: Run telemetry privacy tests
+        working-directory: ./app/frontend
+        run: npm run test:telemetry
+
   build:
     name: Build Frontend
     runs-on: ubuntu-latest
@@ -75,6 +79,41 @@ jobs:
           NEXT_PUBLIC_STELLAR_NETWORK: ${{ secrets.NEXT_PUBLIC_STELLAR_NETWORK }}
           NEXT_PUBLIC_ERROR_REPORTING_ENABLED: ${{ secrets.NEXT_PUBLIC_ERROR_REPORTING_ENABLED }}
           NEXT_PUBLIC_APP_VERSION: ${{ secrets.NEXT_PUBLIC_APP_VERSION }}
+
+  visual-regression:
+    name: Visual Regression
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: app/frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./app/frontend
+        run: npm ci
+
+      - name: Install Chromium
+        working-directory: ./app/frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Run visual checks
+        working-directory: ./app/frontend
+        run: npm run test:visual
+
+      - name: Upload visual screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-visual-screenshots
+          path: app/frontend/test-results/
+          if-no-files-found: ignore
 
   security-scan:
     name: Security Scan
