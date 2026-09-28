@@ -97,6 +97,19 @@ export class SorobanEventParser {
     }
   }
 
+  isWellFormedXdr(raw: RawHorizonContractEvent): boolean {
+    try {
+      if (!Array.isArray(raw.topic) || typeof raw.value?.xdr !== "string") {
+        return false;
+      }
+      raw.topic.forEach((topic) => xdr.ScVal.fromXDR(topic, "base64"));
+      xdr.ScVal.fromXDR(raw.value.xdr, "base64");
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   isSupportedSchemaVersion(
     eventName: SorobanEventType,
     schemaVersion: number,

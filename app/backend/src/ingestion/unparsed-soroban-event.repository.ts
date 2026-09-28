@@ -7,6 +7,10 @@ export type UnparsedSorobanEventReason =
   | "unknown_schema_version"
   | "parse_failure";
 
+export type UnparsedSorobanEventStatus = "pending" | "replayed" | "dead_letter";
+
+const MAX_REPLAY_ATTEMPTS = 5;
+
 export interface SaveUnparsedSorobanEventInput {
   raw: RawHorizonContractEvent;
   reason: UnparsedSorobanEventReason;
@@ -22,7 +26,7 @@ export interface UnparsedSorobanEventRecord
   ledger: number;
   transactionHash: string;
   attempts: number;
-  status: "pending" | "replayed";
+  status: UnparsedSorobanEventStatus;
 }
 
 @Injectable()
@@ -108,7 +112,36 @@ export class UnparsedSorobanEventRepository {
       ledger: Number(row.ledger),
       transactionHash: String(row.transaction_hash),
       attempts: Number(row.attempts ?? 0),
-      status: row.status as "pending" | "replayed",
+      status: row.status as UnparsedSorobanEventStatus,
+    }));
+  }
+
+  async listDeadLetter(limit = 100): Promise<UnparsedSorobanEventRecord[]> {
+    const { data, error } = await this.supabase
+      .getClient()
+      .from("unparsed_soroban_events")
+      .select("*")
+      .eq("status", "dead_letter")
+      .order("updated_at", { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      this.logger.error(`Failed to list dead-letter Soroban events: ${error.message}`);
+      throw error;
+    }
+
+    return (data ?? []).map((row: Record<string, unknown>) => ({
+      raw: row.raw_event as RawHorizonContractEvent,
+      reason: row.reason as UnparsedSorobanEventReason,
+      eventName: (row.event_name as string | null) ?? null,
+      schemaVersion: row.schema_version == null ? null : Number(row.schema_version),
+      errorMessage: (row.error_message as string | null) ?? null,
+      pagingToken: String(row.paging_token),
+      contractId: String(row.contract_id),
+      ledger: Number(row.ledger),
+      transactionHash: String(row.transaction_hash),
+      attempts: Number(row.attempts ?? 0),
+      status: row.status as UnparsedSorobanEventStatus,
     }));
   }
 
@@ -144,16 +177,14 @@ export class UnparsedSorobanEventRepository {
   }
 
   async markFailed(pagingToken: string, errorMessage: string): Promise<void> {
-    await this.incrementAttempts(pagingToken);
-    const { error } = await this.supabase
-      .getClient()
-      .from("unparsed_soroban_events")
-      .update({
-        status: "pending",
-        error_message: errorMessage,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("paging_token", pagingToken);
+    const { error } = await this.supabase.getClient().rpc(
+      "record_unparsed_soroban_replay_failure",
+      {
+        p_paging_token: pagingToken,
+        p_error_message: errorMessage,
+        p_max_attempts: MAX_REPLAY_ATTEMPTS,
+      },
+    );
 
     if (error) throw error;
   }
@@ -186,7 +217,7 @@ export class UnparsedSorobanEventRepository {
       ledger: Number(data.ledger),
       transactionHash: String(data.transaction_hash),
       attempts: Number(data.attempts ?? 0),
-      status: data.status as "pending" | "replayed",
+      status: data.status as UnparsedSorobanEventStatus,
     };
   }
 
